@@ -7,9 +7,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "dateswipe_bot")
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = os.getenv("DB_PATH", "tele_tinder.db")
 
-CURRENCY = "MDL"  # Moldovan Leu (amount smallest unit = bani, 1 MDL = 100)
+PRICE_SYMBOL = os.getenv("PRICE_SYMBOL", "₹")
+NOTIFY_NEW_USERS = os.getenv("NOTIFY_NEW_USERS", "1") == "1"
+START_DELAY = int(os.getenv("START_DELAY", "20"))
+
+CURRENCY = "MDL"  # Moldovan Leu (smallest unit bani: 1 MDL = 100)
 
 # price = bani (4900 = 49.00 MDL). Telegram ka minimum amount check kar lein.
 PLANS = {
@@ -18,7 +24,6 @@ PLANS = {
     "quarter": {"title": "Premium 90 Days", "days": 90, "price": 34900, "coins": 2200},
 }
 
-# Limits
 FREE_LIKES_PER_DAY = 30
 FREE_SUPER_PER_DAY = 1
 PREMIUM_SUPER_PER_DAY = 10
