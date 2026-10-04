@@ -6,8 +6,8 @@ from aiogram.types import Message, CallbackQuery
 
 import db
 import keyboards as k
-from config import INTERESTS, REFERRAL_COINS
-from utils import card, is_premium, interest_set
+from config import INTERESTS, REFERRAL_COINS, ADMIN_IDS, NOTIFY_NEW_USERS
+from utils import card, is_premium, esc, safe_delete
 
 router = Router()
 
@@ -22,16 +22,7 @@ class Reg(StatesGroup):
     location = State()
 
 
-async def finish_step(target, state: FSMContext, uid: int, bot: Bot, after):
-    """Edit mode me wapas menu, warna next step."""
-    data = await state.get_data()
-    if data.get("editing"):
-        await state.clear()
-        await bot.send_message(uid, "✅ Update ho gaya!", reply_markup=k.main_menu())
-    else:
-        await after()
-
-
+# ---------- steps ----------
 async def ask_age(uid, bot, state):
     await state.set_state(Reg.age)
     await bot.send_message(uid, "🎂 Apni <b>age</b> bhejein (18-99). Ye app sirf 18+ ke liye hai.")
@@ -74,7 +65,17 @@ async def show_menu(uid, bot):
     await bot.send_message(uid, "🏠 <b>Main Menu</b>", reply_markup=k.main_menu())
 
 
-# ---------------- /start ----------------
+async def after_step(state: FSMContext, uid: int, bot: Bot, next_step):
+    """Edit mode me update ke baad menu, warna registration ka next step."""
+    data = await state.get_data()
+    if data.get("editing"):
+        await state.clear()
+        await bot.send_message(uid, "✅ Update ho gaya!", reply_markup=k.main_menu())
+    else:
+        await next_step(uid, bot, state)
+
+
+# ---------- /start ----------
 @router.message(CommandStart())
 async def start(m: Message, state: FSMContext, command: CommandObject, bot: Bot):
     await state.clear()
@@ -86,12 +87,21 @@ async def start(m: Message, state: FSMContext, command: CommandObject, bot: Bot)
             r = await db.get_user_by_code(command.args[4:])
             if r and r["id"] != uid:
                 ref_id = r["id"]
-        await db.create_user(uid, m.from_user.first_name, m.from_user.username, ref_id)
+        await db.create_user(m.from_user, ref_id)
         u = await db.get_user(uid)
-    if m.from_user.username != u["username"]:
-        await db.update_user(uid, username=m.from_user.username)
+        if NOTIFY_NEW_USERS:
+            uname = f"@{m.from_user.username}" if m.from_user.username else "—"
+            for a in ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        a, f"🆕 <b>Naya user</b>\n{esc(m.from_user.full_name)} ({uname})\n"
+                           f"🆔 <code>{uid}</code>\nTotal users: {await db.count_users()}",
+                        reply_markup=k.kb([[k.B(text="👤 Open", callback_data=f"adm:user:{uid}")]]))
+                except Exception:
+                    pass
     if u["profile_done"]:
-        await m.answer(f"👋 Wapas swagat hai, <b>{u['name']}</b>!", reply_markup=k.main_menu())
+        await m.answer(f"👋 Wapas swagat hai, <b>{esc(u['name'] or '')}</b>!",
+                       reply_markup=k.main_menu())
         return
     await m.answer("💘 <b>Tele Tinder</b> me swagat hai!\nChalo profile banate hain.")
     await ask_age(uid, bot, state)
@@ -107,21 +117,23 @@ async def got_age(m: Message, state: FSMContext, bot: Bot):
     if age > 99:
         return await m.answer("Sahi age bhejein (18-99).")
     await db.update_user(m.from_user.id, age=age)
-    await finish_step(m, state, m.from_user.id, bot, lambda: ask_gender(m.from_user.id, bot, state))
+    await after_step(state, m.from_user.id, bot, ask_gender)
 
 
 @router.callback_query(Reg.gender, F.data.startswith("g:"))
 async def got_gender(c: CallbackQuery, state: FSMContext, bot: Bot):
     await db.update_user(c.from_user.id, gender=c.data.split(":")[1])
-    await c.message.delete()
+    await c.answer()
+    await safe_delete(c.message)
     await ask_looking(c.from_user.id, bot, state)
 
 
 @router.callback_query(Reg.looking, F.data.startswith("l:"))
 async def got_looking(c: CallbackQuery, state: FSMContext, bot: Bot):
     await db.update_user(c.from_user.id, looking_for=c.data.split(":")[1])
-    await c.message.delete()
-    await finish_step(c, state, c.from_user.id, bot, lambda: ask_bio(c.from_user.id, bot, state))
+    await c.answer()
+    await safe_delete(c.message)
+    await after_step(state, c.from_user.id, bot, ask_bio)
 
 
 @router.message(Reg.bio)
@@ -129,7 +141,7 @@ async def got_bio(m: Message, state: FSMContext, bot: Bot):
     if not m.text or len(m.text) > 500:
         return await m.answer("Text me bio bhejein (max 500 characters).")
     await db.update_user(m.from_user.id, bio=m.text.strip())
-    await finish_step(m, state, m.from_user.id, bot, lambda: ask_interests(m.from_user.id, bot, state))
+    await after_step(state, m.from_user.id, bot, ask_interests)
 
 
 @router.callback_query(Reg.interests, F.data.startswith("i:"))
@@ -141,9 +153,9 @@ async def got_interest(c: CallbackQuery, state: FSMContext, bot: Bot):
         if not sel:
             return await c.answer("Kam se kam 1 chunein", show_alert=True)
         await db.update_user(c.from_user.id, interests="|".join(sel))
-        await c.message.delete()
-        return await finish_step(c, state, c.from_user.id, bot,
-                                 lambda: ask_photo(c.from_user.id, bot, state))
+        await c.answer()
+        await safe_delete(c.message)
+        return await after_step(state, c.from_user.id, bot, ask_photo)
     tag = INTERESTS[int(val)]
     if tag in sel:
         sel.remove(tag)
@@ -152,19 +164,22 @@ async def got_interest(c: CallbackQuery, state: FSMContext, bot: Bot):
     else:
         return await c.answer("Max 5 interests", show_alert=True)
     await state.update_data(sel=sel)
-    await c.message.edit_reply_markup(reply_markup=k.interests_kb(sel))
+    try:
+        await c.message.edit_reply_markup(reply_markup=k.interests_kb(sel))
+    except Exception:
+        pass
     await c.answer()
 
 
 @router.message(Reg.photo, F.photo)
 async def got_photo(m: Message, state: FSMContext, bot: Bot):
     await db.update_user(m.from_user.id, photo=m.photo[-1].file_id)
-    await finish_step(m, state, m.from_user.id, bot, lambda: ask_location(m.from_user.id, bot, state))
+    await after_step(state, m.from_user.id, bot, ask_location)
 
 
 @router.message(Reg.photo)
 async def need_photo(m: Message):
-    await m.answer("Photo bhejein 📸")
+    await m.answer("Photo bhejein 📸 (file nahi, normal photo).")
 
 
 @router.message(Reg.location)
@@ -174,15 +189,16 @@ async def got_location(m: Message, state: FSMContext, bot: Bot):
         await db.update_user(uid, lat=m.location.latitude, lon=m.location.longitude)
     elif not (m.text and "skip" in m.text.lower()):
         return await m.answer("Location button dabayein ya Skip likhein.")
-    u = await db.get_user(uid)
     data = await state.get_data()
     await state.clear()
     await m.answer("✅ Saved!", reply_markup=k.REMOVE)
     if data.get("editing"):
         return await show_menu(uid, bot)
-    await db.update_user(uid, profile_done=1)
-    if u["referred_by"]:
+    u = await db.get_user(uid)
+    await db.update_user(uid, profile_done=1, profile_at=db.now())
+    if u["referred_by"] and not u["ref_rewarded"]:
         await db.add_coins(u["referred_by"], REFERRAL_COINS)
+        await db.update_user(uid, ref_rewarded=1)
         try:
             await bot.send_message(u["referred_by"],
                                    f"🎉 Aapke referral ne join kiya! +{REFERRAL_COINS} 🪙")
@@ -192,7 +208,7 @@ async def got_location(m: Message, state: FSMContext, bot: Bot):
     await show_menu(uid, bot)
 
 
-# ---------------- my profile / edit ----------------
+# ---------- my profile / edit ----------
 async def send_my_profile(uid, bot):
     u = await db.get_user(uid)
     text = "👤 <b>Your Profile</b>\n\n" + card(u)
@@ -200,7 +216,10 @@ async def send_my_profile(uid, bot):
     text += "\n💎 Premium: Active" if is_premium(u) else "\n💎 Premium: No"
     if not u["active"]:
         text += "\n⏸ Profile paused"
-    await bot.send_photo(uid, u["photo"], caption=text, reply_markup=k.edit_kb())
+    if u["photo"]:
+        await bot.send_photo(uid, u["photo"], caption=text, reply_markup=k.edit_kb())
+    else:
+        await bot.send_message(uid, text, reply_markup=k.edit_kb())
 
 
 @router.message(Command("myprofile"))
@@ -213,6 +232,15 @@ async def cmd_edit(m: Message):
     await m.answer("✏️ Kya edit karna hai?", reply_markup=k.edit_kb())
 
 
+EDIT_STEPS = {"bio": ask_bio, "age": ask_age, "photo": ask_photo, "interests": ask_interests,
+              "location": ask_location, "looking": ask_looking}
+
+
+def delete_confirm_kb():
+    return k.kb([[k.B(text="✅ Haan, delete karo", callback_data="del:yes"),
+                  k.B(text="❌ Nahi", callback_data="m:menu")]])
+
+
 @router.callback_query(F.data.startswith("ed:"))
 async def edit_cb(c: CallbackQuery, state: FSMContext, bot: Bot):
     what, uid = c.data.split(":")[1], c.from_user.id
@@ -220,27 +248,26 @@ async def edit_cb(c: CallbackQuery, state: FSMContext, bot: Bot):
     if what == "pause":
         u = await db.get_user(uid)
         await db.update_user(uid, active=0 if u["active"] else 1)
-        return await c.message.answer("⏸ Paused" if u["active"] else "▶️ Resumed",
+        return await c.message.answer("⏸ Profile paused" if u["active"] else "▶️ Profile resumed",
                                       reply_markup=k.main_menu())
     if what == "delete":
-        return await c.message.answer(
-            "⚠️ Pakka delete karna hai? Type karein: <code>/confirmdelete</code>")
-    await state.clear()
-    await state.update_data(editing=True)
-    await {"bio": ask_bio, "age": ask_age, "photo": ask_photo, "interests": ask_interests,
-           "location": ask_location, "looking": ask_looking}[what](uid, bot, state)
-    await state.update_data(editing=True)
+        return await c.message.answer("⚠️ Profile delete karna hai? Aapke matches aur likes hat jayenge.",
+                                      reply_markup=delete_confirm_kb())
+    if what in EDIT_STEPS:
+        await state.clear()
+        await EDIT_STEPS[what](uid, bot, state)
+        await state.update_data(editing=True)
 
 
 @router.message(Command("deleteprofile"))
 async def cmd_del(m: Message):
-    await m.answer("⚠️ Pakka delete karna hai? Type karein: <code>/confirmdelete</code>")
+    await m.answer("⚠️ Profile delete karna hai? Aapke matches aur likes hat jayenge.",
+                   reply_markup=delete_confirm_kb())
 
 
-@router.message(Command("confirmdelete"))
-async def confirm_del(m: Message, state: FSMContext):
-    uid = m.from_user.id
+@router.callback_query(F.data == "del:yes")
+async def confirm_del(c: CallbackQuery, state: FSMContext):
     await state.clear()
-    await db.execute("DELETE FROM users WHERE id=?", (uid,))
-    await db.execute("DELETE FROM swipes WHERE from_id=? OR to_id=?", (uid, uid))
-    await m.answer("🗑 Profile delete ho gaya. Dobara /start karein.")
+    await db.reset_profile(c.from_user.id)
+    await c.answer()
+    await c.message.answer("🗑 Profile delete ho gaya. Dobara banane ke liye /start karein.")

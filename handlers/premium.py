@@ -1,12 +1,11 @@
-from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, LabeledPrice, PreCheckoutQuery
 
 import db
 import keyboards as k
-from config import PLANS, PAYMENT_PROVIDER_TOKEN, CURRENCY
-from utils import is_premium
+from config import PLANS, PAYMENT_PROVIDER_TOKEN, CURRENCY, ADMIN_IDS
+from utils import is_premium, fmt_ts, esc
 
 router = Router()
 
@@ -17,7 +16,7 @@ BENEFITS = ("♾ Unlimited likes\n↩️ Rewind (last swipe wapas)\n👀 Dekhein
 def premium_text(u) -> str:
     t = "💎 <b>Premium Membership</b>\n\n" + BENEFITS + "\n\n"
     if is_premium(u):
-        t += "✅ Active till: " + datetime.fromtimestamp(u["premium_until"]).strftime("%d %b %Y %H:%M") + "\n\n"
+        t += "✅ Active till: " + fmt_ts(u["premium_until"]) + "\n\n"
     t += "Plan chunein:"
     return t
 
@@ -31,7 +30,9 @@ async def cmd_premium(m: Message):
 @router.callback_query(F.data.startswith("pay:"))
 async def pay(c: CallbackQuery, bot: Bot):
     key = c.data.split(":")[1]
-    plan = PLANS[key]
+    plan = PLANS.get(key)
+    if not plan:
+        return await c.answer()
     await c.answer()
     if not PAYMENT_PROVIDER_TOKEN:
         return await c.message.answer("Payment abhi configure nahi hai.")
@@ -52,7 +53,7 @@ async def pre_checkout(q: PreCheckoutQuery):
 
 
 @router.message(F.successful_payment)
-async def paid(m: Message):
+async def paid(m: Message, bot: Bot):
     sp = m.successful_payment
     key = sp.invoice_payload.split(":")[1]
     plan = PLANS[key]
@@ -60,15 +61,23 @@ async def paid(m: Message):
     await db.execute(
         "INSERT INTO payments(user_id,plan,amount,currency,charge_id,ts) VALUES(?,?,?,?,?,?)",
         (m.from_user.id, key, sp.total_amount, sp.currency,
-         sp.provider_payment_charge_id, db.now()))
+         sp.provider_payment_charge_id or sp.telegram_payment_charge_id, db.now()))
     await m.answer(f"🎉 Payment successful! 💎 {plan['title']} activate ho gaya.",
                    reply_markup=k.main_menu())
+    for a in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                a, f"💳 <b>Payment</b>: {esc(m.from_user.full_name)} (<code>{m.from_user.id}</code>)\n"
+                   f"{plan['title']} · {sp.total_amount / 100:.2f} {sp.currency}")
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("coinbuy:"))
 async def coinbuy(c: CallbackQuery):
-    key = c.data.split(":")[1]
-    plan = PLANS[key]
+    plan = PLANS.get(c.data.split(":")[1])
+    if not plan:
+        return await c.answer()
     u = await db.get_user(c.from_user.id)
     if u["coins"] < plan["coins"]:
         return await c.answer(f"{plan['coins']} coins chahiye, aapke paas {u['coins']}", show_alert=True)

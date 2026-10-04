@@ -12,6 +12,8 @@ from config import (MOODS, ICEBREAKERS, BOOST_COST_COINS, BOOST_MINUTES, DAILY_B
 from db import now
 from utils import is_premium, is_boosted
 from handlers import discover, profile
+from handlers.premium import premium_text
+from utils import esc
 
 router = Router()
 
@@ -143,7 +145,7 @@ async def cmd_boost(m: Message, bot: Bot):
 # ---------- coins / refer ----------
 async def send_coins(bot, uid):
     u = await db.get_user(uid)
-    refs = await db.fetchone("SELECT COUNT(*) c FROM users WHERE referred_by=?", (uid,))
+    refs = {"c": await db.count_referrals(uid)}
     link = f"https://t.me/{BOT_USERNAME}?start=ref_{u['ref_code']}"
     await bot.send_message(
         uid,
@@ -160,7 +162,6 @@ async def cmd_coins(m: Message, bot: Bot):
 
 
 async def send_premium(bot, uid):
-    from handlers.premium import premium_text
     u = await db.get_user(uid)
     await bot.send_message(uid, premium_text(u), reply_markup=k.premium_kb())
 
@@ -170,8 +171,8 @@ async def send_premium(bot, uid):
 async def cmd_stats(m: Message):
     uid = m.from_user.id
     u = await db.get_user(uid)
-    likes_given = (await db.fetchone("SELECT COUNT(*) c FROM swipes WHERE from_id=? AND type!='pass'", (uid,)))["c"]
-    likes_recv = (await db.fetchone("SELECT COUNT(*) c FROM swipes WHERE to_id=? AND type!='pass'", (uid,)))["c"]
+    likes_given = (await db.fetchone("SELECT COUNT(*) AS c FROM swipes WHERE from_id=? AND type!='pass'", (uid,)))["c"]
+    likes_recv = (await db.fetchone("SELECT COUNT(*) AS c FROM swipes WHERE to_id=? AND type!='pass'", (uid,)))["c"]
     matches = len(await db.get_matches(uid))
     rate = f"{matches / likes_given * 100:.0f}%" if likes_given else "0%"
     await m.answer(f"📊 <b>Your Stats</b>\n👁 Profile views: {u['views']}\n❤️ Likes diye: {likes_given}\n"
