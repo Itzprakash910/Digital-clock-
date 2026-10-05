@@ -11,7 +11,7 @@ from aiogram.types import BotCommand, Message, CallbackQuery
 
 import db
 from config import BOT_TOKEN, START_DELAY
-from handlers import profile, discover, extras, premium, admin, system
+from handlers import profile, discover, extras, premium, admin, system, chat
 
 # Jin commands/buttons ke liye complete profile chahiye
 NEEDS_PROFILE_CMDS = {"find", "myprofile", "editprofile", "matches", "likes", "dailypick", "nearby",
@@ -72,7 +72,7 @@ async def start_web():
 async def main():
     logging.basicConfig(level=logging.INFO)
     await db.init_db()
-    logging.info("Database ready (%s)", "PostgreSQL" if db.USE_PG else "SQLite")
+    logging.info("Database ready (%s)", "MongoDB" if getattr(db, "USE_MONGO", False) else ("PostgreSQL" if getattr(db, "USE_PG", False) else "SQLite"))
     await start_web()
 
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -80,7 +80,7 @@ async def main():
     dp.message.outer_middleware(TrackMiddleware())
     dp.callback_query.outer_middleware(TrackMiddleware())
     dp.include_routers(admin.router, premium.router, profile.router,
-                       extras.router, discover.router, system.router)
+                       extras.router, discover.router, chat.router, system.router)
 
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Start"),

@@ -9,13 +9,16 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
+MONGODB_DB = os.getenv("MONGODB_DB", "tele_tinder")
+DATABASE_BACKEND = os.getenv("DATABASE_BACKEND", "mongo").strip().lower()
 DB_PATH = os.getenv("DB_PATH", "tele_tinder.db")
 
 PRICE_SYMBOL = os.getenv("PRICE_SYMBOL", "₹")
 NOTIFY_NEW_USERS = os.getenv("NOTIFY_NEW_USERS", "1") == "1"
 START_DELAY = int(os.getenv("START_DELAY", "20"))
 
-CURRENCY = "MDL"  # Moldovan Leu (smallest unit bani: 1 MDL = 100)
+CURRENCY = os.getenv("CURRENCY", "INR").upper()  # Moldovan Leu (smallest unit bani: 1 MDL = 100)
 
 # price = bani (4900 = 49.00 MDL). Telegram ka minimum amount check kar lein.
 PLANS = {

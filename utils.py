@@ -84,6 +84,10 @@ def card(u, viewer=None) -> str:
     if u.get("bio"):
         bio = u["bio"] if len(u["bio"]) <= 420 else u["bio"][:420] + "…"
         t += f"\n💬 {esc(bio)}\n"
+    t += f"\n👁 {int(u.get('views') or 0)} views · ❤️ {int(u.get('likes_received') or 0)} likes"
+    if u.get("rating_count"):
+        t += f" · ⭐ {float(u.get('rating_avg') or 0):.1f}/5 ({int(u.get('rating_count') or 0)})"
+    t += "\n"
     if u.get("icebreaker"):
         t += f"\n🧊 <i>{esc(u['icebreaker'])}</i>\n"
     return t

@@ -85,3 +85,15 @@ def premium_kb():
 
 def url_btn(text, url):
     return kb([[B(text=text, url=url)]])
+
+
+def match_actions(target_id):
+    return kb([
+        [B(text="💬 In-Bot Chat", callback_data=f"chat:{target_id}"),
+         B(text="⭐ Rate", callback_data=f"rate:{target_id}")],
+        [B(text="🔐 Premium Contacts", callback_data=f"contact:{target_id}")],
+    ])
+
+
+def rating_kb(target_id):
+    return kb([[B(text=f"{i}⭐", callback_data=f"rating:{target_id}:{i}") for i in range(1, 6)]])
