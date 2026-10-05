@@ -171,8 +171,8 @@ async def send_premium(bot, uid):
 async def cmd_stats(m: Message):
     uid = m.from_user.id
     u = await db.get_user(uid)
-    likes_given = (await db.fetchone("SELECT COUNT(*) AS c FROM swipes WHERE from_id=? AND type!='pass'", (uid,)))["c"]
-    likes_recv = (await db.fetchone("SELECT COUNT(*) AS c FROM swipes WHERE to_id=? AND type!='pass'", (uid,)))["c"]
+    likes_given = await db.count_likes_given(uid)
+    likes_recv = await db.count_likes_received(uid)
     matches = len(await db.get_matches(uid))
     rate = f"{matches / likes_given * 100:.0f}%" if likes_given else "0%"
     await m.answer(f"📊 <b>Your Stats</b>\n👁 Profile views: {u['views']}\n❤️ Likes diye: {likes_given}\n"

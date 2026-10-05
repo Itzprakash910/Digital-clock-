@@ -271,3 +271,32 @@ async def confirm_del(c: CallbackQuery, state: FSMContext):
     await db.reset_profile(c.from_user.id)
     await c.answer()
     await c.message.answer("🗑 Profile delete ho gaya. Dobara banane ke liye /start karein.")
+
+@router.message(Command("contacts"))
+async def cmd_contacts(m: Message):
+    u = await db.get_user(m.from_user.id)
+    if not is_premium(u):
+        return await m.answer("🔐 Contact details manage karna Premium feature hai.", reply_markup=k.premium_kb())
+    await m.answer("📇 Contact details ko update karne ke liye /setcontacts use karein.\n\nFormat:\n/setcontacts telegram=@name phone=... instagram=https://instagram.com/... facebook=https://facebook.com/... other=https://...\n\nPrivacy: contacts mutual-match Premium viewers ko hi dikhte hain.")
+
+@router.message(Command("setcontacts"))
+async def setcontacts(m: Message):
+    u = await db.get_user(m.from_user.id)
+    if not is_premium(u):
+        return await m.answer("🔐 Contact details sirf Premium users set kar sakte hain.", reply_markup=k.premium_kb())
+    text = (m.text or "").partition(" ")[2].strip()
+    if not text:
+        return await m.answer("Example: /setcontacts telegram=@name phone=9999999999 instagram=https://instagram.com/name")
+    vals = {}
+    for token in text.split():
+        if "=" in token:
+            key, val = token.split("=", 1); key = key.strip().lower(); val = val.strip()
+            if key == "telegram": vals["telegram_username"] = val.lstrip("@")
+            elif key == "phone": vals["phone"] = val
+            elif key == "instagram": vals["instagram"] = val
+            elif key == "facebook": vals["facebook"] = val
+            elif key == "other": vals["other_social"] = val
+    if not vals:
+        return await m.answer("Koi valid contact field nahi mila.")
+    await db.set_contacts(m.from_user.id, **vals)
+    await m.answer("✅ Contact details saved. Ye mutual-match Premium viewers ko hi visible honge.")

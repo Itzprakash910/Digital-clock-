@@ -33,7 +33,7 @@ async def show_next(bot: Bot, uid: int, target_id: int | None = None):
         return await bot.send_message(
             uid, "😴 Abhi koi nayi profile nahi. Thodi der baad aayein ya 🚀 /boost karein!",
             reply_markup=k.main_menu())
-    await db.add_view(c["id"])
+    await db.add_view(c["id"], uid)
     await send_profile(bot, uid, c, u)
 
 
@@ -46,7 +46,7 @@ async def notify_match(bot: Bot, a, b):
     for x, y in ((a, b), (b, a)):
         caption = (f"💘 <b>It's a Match!</b>\nAapka aur <b>{esc(y['name'] or '')}</b> ka match hua! "
                    f"Compatibility: {compat(x, y)}%")
-        markup = k.url_btn(f"💬 Chat with {y['name'] or 'User'}", link_for(y))
+        markup = k.match_actions(y["id"])
         try:
             if y.get("photo"):
                 await bot.send_photo(x["id"], y["photo"], caption=caption, reply_markup=markup)
@@ -140,7 +140,7 @@ async def send_matches(bot, uid):
     if not ms:
         return await bot.send_message(uid, "💔 Abhi koi match nahi. /find karte rahein!")
     for u in ms[:20]:
-        markup = k.url_btn("💬 Chat", link_for(u))
+        markup = k.match_actions(u["id"])
         if u.get("photo"):
             await bot.send_photo(uid, u["photo"], caption=card(u), reply_markup=markup)
         else:
@@ -203,3 +203,42 @@ async def send_nearby(bot, uid):
 @router.message(Command("nearby"))
 async def cmd_nearby(m: Message, bot: Bot):
     await send_nearby(bot, m.from_user.id)
+
+
+@router.callback_query(F.data.startswith("contact:"))
+async def contacts(c: CallbackQuery):
+    target = int(c.data.split(":")[1]); me = c.from_user.id
+    if not await db.can_view_contacts(me, target):
+        return await c.answer("🔐 Contacts sirf Premium + mutual match ke liye hain.", show_alert=True)
+    x = await db.get_contacts(target)
+    if not x:
+        return await c.answer("Is user ne contact details add nahi ki hain.", show_alert=True)
+    lines = ["🔐 <b>Premium Contact Access</b>"]
+    if x.get("show_telegram") and x.get("telegram_username"): lines.append(f"Telegram: @{esc(str(x['telegram_username']).lstrip('@'))}")
+    if x.get("show_phone") and x.get("phone"): lines.append(f"📞 Phone: <code>{esc(str(x['phone']))}</code>")
+    if x.get("show_social"):
+        for key, label in (("instagram","Instagram"),("facebook","Facebook"),("other_social","Social")):
+            if x.get(key): lines.append(f"{label}: {esc(str(x[key]))}")
+    if len(lines) == 1: lines.append("Owner ne abhi koi Premium-visible contact set nahi kiya.")
+    await c.answer()
+    await c.message.answer("\n".join(lines))
+
+
+@router.callback_query(F.data.startswith("rate:"))
+async def rate_start(c: CallbackQuery):
+    target = int(c.data.split(":")[1])
+    if not any(int(x["id"]) == target for x in await db.get_matches(c.from_user.id)):
+        return await c.answer("Rating sirf matched users ko de sakte hain.", show_alert=True)
+    await c.answer("Rating choose karein")
+    await c.message.answer("⭐ Profile ko rate karein:", reply_markup=k.rating_kb(target))
+
+
+@router.callback_query(F.data.startswith("rating:"))
+async def rate_save(c: CallbackQuery):
+    _, target, value = c.data.split(":")
+    target, value = int(target), int(value)
+    if not any(int(x["id"]) == target for x in await db.get_matches(c.from_user.id)):
+        return await c.answer("Rating sirf matched users ko de sakte hain.", show_alert=True)
+    avg, count = await db.add_rating(c.from_user.id, target, value)
+    await c.answer(f"⭐ Rating saved: {value}/5")
+    await c.message.answer(f"✅ Rating saved. Profile rating: {avg:.1f}/5 ({count} ratings)")

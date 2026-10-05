@@ -58,10 +58,8 @@ async def paid(m: Message, bot: Bot):
     key = sp.invoice_payload.split(":")[1]
     plan = PLANS[key]
     await db.extend_premium(m.from_user.id, plan["days"])
-    await db.execute(
-        "INSERT INTO payments(user_id,plan,amount,currency,charge_id,ts) VALUES(?,?,?,?,?,?)",
-        (m.from_user.id, key, sp.total_amount, sp.currency,
-         sp.provider_payment_charge_id or sp.telegram_payment_charge_id, db.now()))
+    await db.add_payment(m.from_user.id, key, sp.total_amount, sp.currency,
+                         sp.provider_payment_charge_id or sp.telegram_payment_charge_id)
     await m.answer(f"🎉 Payment successful! 💎 {plan['title']} activate ho gaya.",
                    reply_markup=k.main_menu())
     for a in ADMIN_IDS:
