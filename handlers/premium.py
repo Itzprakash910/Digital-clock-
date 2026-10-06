@@ -39,7 +39,7 @@ async def pay(c: CallbackQuery, bot: Bot):
     await bot.send_invoice(
         chat_id=c.from_user.id,
         title=plan["title"],
-        description="Tele Tinder Premium: unlimited likes, rewind, who-liked-me aur zyada.",
+        description="ConnectMate Premium: unlimited likes/chats, rewind, who-liked-me, contacts aur zyada.",
         payload=f"premium:{key}",
         provider_token=PAYMENT_PROVIDER_TOKEN,
         currency=CURRENCY,

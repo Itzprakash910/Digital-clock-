@@ -213,6 +213,11 @@ async def send_my_profile(uid, bot):
     u = await db.get_user(uid)
     text = "👤 <b>Your Profile</b>\n\n" + card(u)
     text += f"\n👁 Views: {u['views']}\n🪙 Coins: {u['coins']}"
+    try:
+        posts = await db.list_posts(uid)
+        text += f"\n📸 Posts: {len(posts)}/4"
+    except Exception:
+        pass
     text += "\n💎 Premium: Active" if is_premium(u) else "\n💎 Premium: No"
     if not u["active"]:
         text += "\n⏸ Profile paused"
@@ -277,7 +282,7 @@ async def cmd_contacts(m: Message):
     u = await db.get_user(m.from_user.id)
     if not is_premium(u):
         return await m.answer("🔐 Contact details manage karna Premium feature hai.", reply_markup=k.premium_kb())
-    await m.answer("📇 Contact details ko update karne ke liye /setcontacts use karein.\n\nFormat:\n/setcontacts telegram=@name phone=... instagram=https://instagram.com/... facebook=https://facebook.com/... other=https://...\n\nPrivacy: contacts mutual-match Premium viewers ko hi dikhte hain.")
+    await m.answer("📇 Contact details ko update karne ke liye /setcontacts use karein.\n\nFormat:\n/setcontacts telegram=@name phone=... instagram=https://instagram.com/... facebook=https://facebook.com/... other=https://... show_phone=1 show_social=1\n\nPrivacy: contacts mutual-match Premium viewers ko hi dikhte hain.")
 
 @router.message(Command("setcontacts"))
 async def setcontacts(m: Message):
@@ -296,6 +301,8 @@ async def setcontacts(m: Message):
             elif key == "instagram": vals["instagram"] = val
             elif key == "facebook": vals["facebook"] = val
             elif key == "other": vals["other_social"] = val
+            elif key in ("show_telegram","show_phone","show_social"):
+                vals[key] = 1 if val.lower() in ("1","yes","true","on") else 0
     if not vals:
         return await m.answer("Koi valid contact field nahi mila.")
     await db.set_contacts(m.from_user.id, **vals)

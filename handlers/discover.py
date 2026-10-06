@@ -16,6 +16,9 @@ def link_for(u):
 
 async def send_profile(bot: Bot, uid: int, c: dict, viewer: dict):
     caption = card(c, viewer=viewer)
+    posts = await db.list_posts(c["id"])
+    if posts:
+        caption += f"\n📸 <b>{len(posts)} profile posts</b> — tap Posts to view\n"
     if c.get("photo"):
         await bot.send_photo(uid, c["photo"], caption=caption, reply_markup=k.swipe_kb(c["id"]))
     else:

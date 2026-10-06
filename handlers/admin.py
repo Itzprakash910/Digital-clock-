@@ -237,6 +237,8 @@ async def user_view(uid: int):
          B(text="🪙 +200", callback_data=f"adm:act:coin200:{uid}")],
         [B(text="✉️ Message", callback_data=f"adm:msg:{uid}"),
          B(text="🖼 Profile", callback_data=f"adm:pic:{uid}")],
+        [B(text="🔄 Reset Profile", callback_data=f"adm:act:reset:{uid}"),
+         B(text="🗑 Delete User", callback_data=f"adm:confirmdel:{uid}")],
         [B(text="⬅️ Users", callback_data="adm:users:0")],
     ])
     return text, markup
@@ -248,6 +250,23 @@ async def cb_user(c: CallbackQuery):
     await c.answer()
     await safe_edit(c.message, text, markup)
 
+
+@router.callback_query(F.data.startswith("adm:confirmdel:"))
+async def cb_confirm_delete(c: CallbackQuery):
+    uid=int(c.data.split(":")[2])
+    await c.answer()
+    await c.message.answer(f"⚠️ User <code>{uid}</code> permanently delete karna hai?",
+        reply_markup=kb([[B(text="🗑 YES, DELETE",callback_data=f"adm:delete:{uid}"),
+                          B(text="❌ Cancel",callback_data=f"adm:user:{uid}")]]))
+
+@router.callback_query(F.data.startswith("adm:delete:"))
+async def cb_delete_user(c: CallbackQuery, bot: Bot):
+    uid=int(c.data.split(":")[2])
+    await db.delete_user(uid)
+    await c.answer("User deleted")
+    try: await bot.send_message(uid,"🗑 Aapka ConnectMate account admin action se delete kar diya gaya.")
+    except Exception: pass
+    await safe_edit(c.message,"✅ User permanently deleted.",panel_kb())
 
 @router.callback_query(F.data.startswith("adm:act:"))
 async def cb_act(c: CallbackQuery, bot: Bot):
@@ -273,6 +292,9 @@ async def cb_act(c: CallbackQuery, bot: Bot):
         n = 50 if action == "coin50" else 200
         await db.add_coins(uid, n)
         note = f"🎁 Aapko {n} 🪙 coins mile!"
+    elif action == "reset":
+        await db.reset_profile(uid)
+        note = "🔄 Aapki profile reset kar di gayi. /start se dobara bana sakte hain."
     if note:
         try:
             await bot.send_message(uid, note)

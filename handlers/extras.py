@@ -11,7 +11,7 @@ from config import (MOODS, ICEBREAKERS, BOOST_COST_COINS, BOOST_MINUTES, DAILY_B
                     BOT_USERNAME, REFERRAL_COINS)
 from db import now
 from utils import is_premium, is_boosted
-from handlers import discover, profile
+from handlers import discover, profile, filters
 from handlers.premium import premium_text
 from utils import esc
 
@@ -42,6 +42,7 @@ async def menu_cb(c: CallbackQuery, bot: Bot, state: FSMContext):
         "boost": lambda: do_boost(bot, uid),
         "premium": lambda: send_premium(bot, uid),
         "coins": lambda: send_coins(bot, uid),
+        "filters": lambda: filters.send_filters(bot, uid),
     }
     if what in actions:
         await actions[what]()
@@ -184,5 +185,5 @@ async def cmd_stats(m: Message):
 async def cmd_help(m: Message):
     await m.answer(
         "📋 <b>Commands</b>\n/start /find /myprofile /editprofile /matches /likes\n"
-        "/dailypick /nearby /mood /icebreaker /daily /boost\n/coins /refer /premium /stats /deleteprofile\n\n"
-        "💎 Premium: unlimited likes, rewind, who-liked-me, 10 super likes, top-3 picks, more nearby.")
+        "/dailypick /nearby /mood /icebreaker /daily /boost\n/coins /refer /premium /stats /posts /contacts /setcontacts /chat /endchat /deleteprofile\n\n"
+        "💎 Premium: unlimited likes + new chats, rewind, who-liked-me, 10 super likes, top-3 picks, more nearby, mutual-match contacts/social.")
