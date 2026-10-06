@@ -33,3 +33,14 @@ Works with a worker/service that can run `python bot.py` and expose `$PORT` (Ren
 
 ## Safety
 18+ only. Add Terms/Privacy/Report/Block flows and moderation before public launch. Never put secrets in source control.
+
+
+## Discovery reliability fixes (v1.1)
+- Reciprocal gender/looking-for compatibility is enforced in both SQLite and MongoDB.
+- SQLite now includes likes/rating columns required by profile ranking and ratings.
+- MongoDB syntax error in the search helper was fixed.
+- Discover now has clear empty-state/filter actions.
+- Nearby explicitly asks for Telegram location when unavailable.
+- Profile gallery buttons are available directly from Discover and Matches.
+- `/discover` is now an alias for `/find`.
+- MongoDB is selected only when `MONGODB_URI` is configured; otherwise SQLite fallback is used.

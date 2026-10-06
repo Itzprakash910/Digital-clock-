@@ -1,11 +1,14 @@
-"""Database selector.
+"""Database selector with safe local fallback.
 
-Set DATABASE_BACKEND=mongo to use MongoDB Atlas. Otherwise the legacy SQLite
-backend remains available for local development/backward compatibility.
+MongoDB is used when DATABASE_BACKEND=mongo *and* MONGODB_URI is configured.
+Otherwise SQLite is used automatically for local development/testing.
 """
 import os
 
-if os.getenv("DATABASE_BACKEND", "mongo").strip().lower() == "mongo":
+_backend = os.getenv("DATABASE_BACKEND", "mongo").strip().lower()
+_mongo_uri = os.getenv("MONGODB_URI", "").strip()
+
+if _backend == "mongo" and _mongo_uri:
     from db_mongo import *  # noqa: F401,F403
 else:
     from db_sqlite import *  # noqa: F401,F403

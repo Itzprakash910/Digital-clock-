@@ -21,6 +21,8 @@ USER_COLUMNS = {
     "tg_premium": "BIGINT DEFAULT 0", "ref_rewarded": "BIGINT DEFAULT 0",
     "blocked": "BIGINT DEFAULT 0", "last_active": "BIGINT DEFAULT 0",
     "profile_at": "BIGINT DEFAULT 0",
+    "likes_received": "BIGINT DEFAULT 0", "likes_given": "BIGINT DEFAULT 0",
+    "rating_avg": "DOUBLE PRECISION DEFAULT 0", "rating_count": "BIGINT DEFAULT 0",
 }
 
 
@@ -38,7 +40,9 @@ CREATE TABLE IF NOT EXISTS users (
   views BIGINT DEFAULT 0, banned BIGINT DEFAULT 0, verified BIGINT DEFAULT 0,
   streak BIGINT DEFAULT 0, last_daily BIGINT DEFAULT 0, active BIGINT DEFAULT 1,
   profile_done BIGINT DEFAULT 0, blocked BIGINT DEFAULT 0, last_active BIGINT DEFAULT 0,
-  profile_at BIGINT DEFAULT 0, created BIGINT
+  profile_at BIGINT DEFAULT 0, created BIGINT,
+  likes_received BIGINT DEFAULT 0, likes_given BIGINT DEFAULT 0,
+  rating_avg DOUBLE PRECISION DEFAULT 0, rating_count BIGINT DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS swipes (
   id {pk}, from_id BIGINT, to_id BIGINT, type TEXT, ts BIGINT
@@ -230,8 +234,23 @@ async def count_referrals(uid):
 
 # ---------- swipes ----------
 async def add_swipe(from_id, to_id, typ):
-    await execute("INSERT INTO swipes(from_id,to_id,type,ts) VALUES(?,?,?,?)",
-                  (from_id, to_id, typ, now()))
+    # One active swipe per direction. This prevents duplicate likes and keeps counters correct.
+    old = await fetchone("SELECT type FROM swipes WHERE from_id=? AND to_id=? ORDER BY id DESC LIMIT 1", (from_id, to_id))
+    if old:
+        old_type = old.get("type")
+        if old_type == typ:
+            return
+        await execute("UPDATE swipes SET type=?, ts=? WHERE from_id=? AND to_id=?",
+                      (typ, now(), from_id, to_id))
+        if old_type in ("like", "super"):
+            await execute("UPDATE users SET likes_given=MAX(0,likes_given-1) WHERE id=?", (from_id,))
+            await execute("UPDATE users SET likes_received=MAX(0,likes_received-1) WHERE id=?", (to_id,))
+    else:
+        await execute("INSERT INTO swipes(from_id,to_id,type,ts) VALUES(?,?,?,?)",
+                      (from_id, to_id, typ, now()))
+    if typ in ("like", "super"):
+        await execute("UPDATE users SET likes_given=likes_given+1 WHERE id=?", (from_id,))
+        await execute("UPDATE users SET likes_received=likes_received+1 WHERE id=?", (to_id,))
 
 
 async def has_swiped(from_id, to_id):
@@ -258,7 +277,13 @@ async def last_swipe(uid):
 
 
 async def delete_swipe(sid):
+    row = await fetchone("SELECT from_id,to_id,type FROM swipes WHERE id=?", (sid,))
+    if not row:
+        return
     await execute("DELETE FROM swipes WHERE id=?", (sid,))
+    if row.get("type") in ("like", "super"):
+        await execute("UPDATE users SET likes_given=MAX(0,likes_given-1) WHERE id=?", (row["from_id"],))
+        await execute("UPDATE users SET likes_received=MAX(0,likes_received-1) WHERE id=?", (row["to_id"],))
 
 
 async def get_matches(uid):
@@ -280,7 +305,7 @@ async def who_liked_me(uid):
 
 _BASE = """FROM users WHERE id!=? AND profile_done=1 AND banned=0 AND active=1 AND blocked=0
            AND id NOT IN (SELECT to_id FROM swipes WHERE from_id=?)
-           AND (CAST(? AS TEXT)='all' OR gender=?)
+           AND (?='all' OR gender=?)
            AND (looking_for='all' OR looking_for=?)"""
 
 
@@ -302,8 +327,10 @@ async def get_candidate(u):
 
 async def get_pool(u, limit=300, need_location=False):
     extra = " AND lat IS NOT NULL" if need_location else ""
-    rows = await fetchall(f"SELECT * {_BASE}{extra} ORDER BY RANDOM() LIMIT {int(limit)}",
-        (u["id"], u["id"], u["looking_for"], u["looking_for"], u["gender"]))
+    # Apply reciprocal gender preference in SQL before the limit, so valid users are not
+    # randomly excluded by a large pool of incompatible profiles.
+    rows = await fetchall(f"SELECT * {_BASE}{extra} ORDER BY boost_until DESC, last_active DESC LIMIT {int(limit)}",
+        (u["id"], u["id"], u.get("looking_for") or "all", u.get("looking_for") or "all", u.get("gender") or ""))
     from utils import distance_km
     out=[]
     for x in rows:

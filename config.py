@@ -20,7 +20,7 @@ START_DELAY = int(os.getenv("START_DELAY", "20"))
 
 CURRENCY = os.getenv("CURRENCY", "INR").upper()
 
-# price = bani (4900 = 49.00 MDL). Telegram ka minimum amount check kar lein.
+# price = smallest currency unit (e.g. 4900 = 49.00 in the configured currency).
 PLANS = {
     "week":    {"title": "Premium 7 Days",  "days": 7,  "price": 4900,  "coins": 300},
     "month":   {"title": "Premium 30 Days", "days": 30, "price": 14900, "coins": 900},

@@ -178,7 +178,7 @@ async def get_matches(uid):
     mutual = await mongo.swipes.find({"from_id": {"$in": ids}, "to_id": uid,
                                       "type": {"$in": ["like", "super"]}}, {"from_id": 1}).to_list(None)
     mids = [x["from_id"] for x in mutual]
-    return [_doc(x) async for x in mongo.users.find({"id": {"$in": mids}, "banned": 0, "profile_done": 1})]
+    return [_doc(x) async for x in mongo.users.find({"id": {"$in": mids}, "banned": 0, "blocked": 0, "active": 1, "profile_done": 1})]
 
 
 async def who_liked_me(uid):
@@ -189,11 +189,13 @@ async def who_liked_me(uid):
     already = await mongo.swipes.find({"from_id": uid, "to_id": {"$in": ids}}, {"to_id": 1}).to_list(None)
     done = {x["to_id"] for x in already}
     ids = [x for x in ids if x not in done]
-    return [_doc(x) async for x in mongo.users.find({"id": {"$in": ids}, "banned": 0, "profile_done": 1})]
+    return [_doc(x) async for x in mongo.users.find({"id": {"$in": ids}, "banned": 0, "blocked": 0, "active": 1, "profile_done": 1})]
 
 
 def _eligible_filter(u):
     q = {"id": {"$ne": int(u["id"]),}, "profile_done": 1, "banned": 0, "active": 1, "blocked": 0}
+    # Both sides must be compatible: candidate gender must match my preference,
+    # and candidate's preference must accept my gender.
     if u.get("looking_for") not in (None, "all"): q["gender"] = u["looking_for"]
     q["looking_for"] = {"$in": ["all", u.get("gender")]} if u.get("gender") else "all"
     return q

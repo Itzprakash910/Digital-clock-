@@ -14,7 +14,7 @@ from config import BOT_TOKEN, START_DELAY
 from handlers import profile, discover, extras, premium, admin, system, chat, posts, filters
 
 # Jin commands/buttons ke liye complete profile chahiye
-NEEDS_PROFILE_CMDS = {"find", "myprofile", "editprofile", "matches", "likes", "dailypick", "nearby",
+NEEDS_PROFILE_CMDS = {"find", "discover", "myprofile", "editprofile", "matches", "likes", "dailypick", "nearby",
                       "mood", "icebreaker", "daily", "boost", "coins", "refer", "premium", "stats", "posts", "contacts", "setcontacts", "filters"}
 NEEDS_PROFILE_CB = {"m", "sw", "ed", "mood", "pay", "coinbuy", "posts", "flt"}
 
@@ -99,7 +99,9 @@ async def main():
 
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Start"),
-        BotCommand(command="find", description="🔥 Discover"),
+        BotCommand(command="menu", description="🏠 Main menu"),
+        BotCommand(command="find", description="🔥 Discover / Find"),
+        BotCommand(command="discover", description="🔥 Discover profiles"),
         BotCommand(command="myprofile", description="👤 My profile"),
         BotCommand(command="editprofile", description="✏️ Edit profile"),
         BotCommand(command="matches", description="💞 Matches"),

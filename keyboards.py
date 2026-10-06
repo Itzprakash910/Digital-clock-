@@ -1,6 +1,6 @@
 from aiogram.types import (InlineKeyboardMarkup, InlineKeyboardButton as B,
                            ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove)
-from config import INTERESTS, MOODS, PLANS, BOOST_COST_COINS
+from config import INTERESTS, MOODS, PLANS, BOOST_COST_COINS, CURRENCY, PRICE_SYMBOL
 
 REMOVE = ReplyKeyboardRemove()
 
@@ -54,9 +54,10 @@ def swipe_kb(target_id):
         [B(text="👎 Pass", callback_data=f"sw:pass:{target_id}"),
          B(text="❤️ Like", callback_data=f"sw:like:{target_id}"),
          B(text="⭐ Super", callback_data=f"sw:super:{target_id}")],
-        [B(text="↩️ Rewind 💎", callback_data="sw:rewind:0"),
-         B(text="🚩 Report", callback_data=f"sw:report:{target_id}"),
-         B(text="🏠 Menu", callback_data="m:menu")],
+        [B(text="📸 Posts", callback_data=f"posts:view:{target_id}"),
+         B(text="↩️ Rewind 💎", callback_data="sw:rewind:0"),
+         B(text="🚩 Report", callback_data=f"sw:report:{target_id}")],
+        [B(text="🏠 Menu", callback_data="m:menu")],
     ])
 
 
@@ -77,7 +78,7 @@ def edit_kb():
 
 
 def premium_kb():
-    rows = [[B(text=f"💳 {p['title']} — {p['price']/100:.0f} MDL", callback_data=f"pay:{k}")]
+    rows = [[B(text=f"💳 {p['title']} — {PRICE_SYMBOL}{p['price']/100:.0f} {CURRENCY}", callback_data=f"pay:{k}")]
             for k, p in PLANS.items()]
     rows += [[B(text=f"🪙 {p['title']} — {p['coins']} coins", callback_data=f"coinbuy:{k}")]
              for k, p in PLANS.items()]
@@ -92,6 +93,7 @@ def url_btn(text, url):
 def match_actions(target_id):
     return kb([
         [B(text="💬 In-Bot Chat", callback_data=f"chat:{target_id}"),
+         B(text="📸 Posts", callback_data=f"posts:view:{target_id}"),
          B(text="⭐ Rate", callback_data=f"rate:{target_id}")],
         [B(text="🔐 Premium Contacts", callback_data=f"contact:{target_id}")],
     ])
