@@ -9,7 +9,7 @@ from utils import is_premium, fmt_ts, esc
 
 router = Router()
 
-BENEFITS = ("♾ Unlimited likes\n↩️ Rewind (last swipe wapas)\n👀 Dekhein kaun ne like kiya\n"
+BENEFITS = ("♾ Unlimited likes\n💬 Unlimited new chats\n↩️ Rewind (last swipe wapas)\n👀 Dekhein kaun ne like kiya\n"
             "⭐ 10 Super Likes/day\n🌟 Top-3 compatibility picks\n📍 10 nearby users\n💎 Profile pe badge")
 
 
@@ -35,7 +35,7 @@ async def pay(c: CallbackQuery, bot: Bot):
         return await c.answer()
     await c.answer()
     if not PAYMENT_PROVIDER_TOKEN:
-        return await c.message.answer("Payment abhi configure nahi hai.")
+        return await c.message.answer("💎 <b>Premium Membership</b> unlock karein!\n\n♾ Unlimited chats\n👀 Who Liked You\n🔐 Premium contacts & social links\n⭐ Super Likes + Rewind\n\nPayment setup hote hi plan purchase kar sakte hain.", reply_markup=k.premium_kb())
     await bot.send_invoice(
         chat_id=c.from_user.id,
         title=plan["title"],

@@ -62,18 +62,23 @@ async def relay(m:Message,state:FSMContext):
     try:
         if m.text:
             await db.save_chat_message(uid,tid,m.text)
-            await m.bot.send_message(tid,f"💬 <b>New message</b>\n{esc(m.text)}")
+            sender = await db.get_user(uid)
+            sender_name = esc(sender.get("name") or m.from_user.full_name or "ConnectMate User")
+            await m.bot.send_message(tid,f"💬 <b>New message from {sender_name}</b>\n{esc(m.text)}")
         elif m.photo:
             fid=m.photo[-1].file_id
             cap=m.caption or ""
             await db.save_chat_message(uid,tid,"[PHOTO] "+cap)
-            await m.bot.send_photo(tid,fid,caption=f"💬 {esc(cap)}" if cap else "💬 Photo")
+            sender = await db.get_user(uid); sender_name = esc(sender.get("name") or m.from_user.full_name or "ConnectMate User")
+            await m.bot.send_photo(tid,fid,caption=f"💬 <b>Photo from {sender_name}</b>\n{esc(cap)}" if cap else f"💬 <b>Photo from {sender_name}</b>")
         elif m.voice:
             await db.save_chat_message(uid,tid,"[VOICE]")
-            await m.bot.send_voice(tid,m.voice.file_id,caption="💬 Voice message")
+            sender = await db.get_user(uid); sender_name = esc(sender.get("name") or m.from_user.full_name or "ConnectMate User")
+            await m.bot.send_voice(tid,m.voice.file_id,caption=f"💬 Voice from {sender_name}")
         elif m.video:
             await db.save_chat_message(uid,tid,"[VIDEO] "+(m.caption or ""))
-            await m.bot.send_video(tid,m.video.file_id,caption=f"💬 {esc(m.caption)}" if m.caption else "💬 Video")
+            sender = await db.get_user(uid); sender_name = esc(sender.get("name") or m.from_user.full_name or "ConnectMate User")
+            await m.bot.send_video(tid,m.video.file_id,caption=f"💬 <b>Video from {sender_name}</b>\n{esc(m.caption)}" if m.caption else f"💬 <b>Video from {sender_name}</b>")
         else:
             return await m.answer("Text, photo, video ya voice bhej sakte hain.")
         await m.answer("✓ Delivered")

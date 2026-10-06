@@ -2,7 +2,7 @@ from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 import db
 import keyboards as k
@@ -10,6 +10,11 @@ from config import INTERESTS, REFERRAL_COINS, ADMIN_IDS, NOTIFY_NEW_USERS
 from utils import card, is_premium, esc, safe_delete
 
 router = Router()
+
+
+class ContactSetup(StatesGroup):
+    phone = State()
+    socials = State()
 
 
 class Reg(StatesGroup):
@@ -258,6 +263,8 @@ async def edit_cb(c: CallbackQuery, state: FSMContext, bot: Bot):
     if what == "delete":
         return await c.message.answer("⚠️ Profile delete karna hai? Aapke matches aur likes hat jayenge.",
                                       reply_markup=delete_confirm_kb())
+    if what == "contacts":
+        return await show_contact_setup(c.from_user.id, bot, state)
     if what in EDIT_STEPS:
         await state.clear()
         await EDIT_STEPS[what](uid, bot, state)
@@ -277,33 +284,87 @@ async def confirm_del(c: CallbackQuery, state: FSMContext):
     await c.answer()
     await c.message.answer("🗑 Profile delete ho gaya. Dobara banane ke liye /start karein.")
 
+async def show_contact_setup(uid, bot, state):
+    u=await db.get_user(uid); x=await db.get_contacts(uid) or {}
+    tg = u.get("username")
+    # Telegram username is detected automatically from the Telegram account.
+    if tg:
+        await db.set_contacts(uid, telegram_username=tg, show_telegram=1)
+        x["telegram_username"]=tg
+    text=("🔗 <b>Contacts & Social Setup</b>\n\n"
+          f"👤 Telegram: <b>@{esc(x.get('telegram_username') or 'Not set')}</b> (automatic)\n"
+          f"📞 Phone: <b>{'Saved' if x.get('phone') else 'Not set'}</b>\n"
+          f"📸 Instagram: {esc(x.get('instagram') or 'Not set')}\n"
+          f"📘 Facebook: {esc(x.get('facebook') or 'Not set')}\n"
+          f"🔗 Other: {esc(x.get('other_social') or 'Not set')}\n\n"
+          "🔐 Contacts public nahi hote; mutual-match Premium viewer ko hi visible honge.")
+    await bot.send_message(uid,text,reply_markup=k.kb([
+        [k.B(text="📞 Add/Update Phone",callback_data="contactsetup:phone")],
+        [k.B(text="🔗 Add Social Links",callback_data="contactsetup:social")],
+        [k.B(text="🏠 Menu",callback_data="m:menu")]]))
+
 @router.message(Command("contacts"))
-async def cmd_contacts(m: Message):
-    u = await db.get_user(m.from_user.id)
-    if not is_premium(u):
-        return await m.answer("🔐 Contact details manage karna Premium feature hai.", reply_markup=k.premium_kb())
-    await m.answer("📇 Contact details ko update karne ke liye /setcontacts use karein.\n\nFormat:\n/setcontacts telegram=@name phone=... instagram=https://instagram.com/... facebook=https://facebook.com/... other=https://... show_phone=1 show_social=1\n\nPrivacy: contacts mutual-match Premium viewers ko hi dikhte hain.")
+async def cmd_contacts(m: Message, bot: Bot, state: FSMContext):
+    await show_contact_setup(m.from_user.id, bot, state)
+
+@router.callback_query(F.data=="contactsetup:phone")
+async def contact_phone(c: CallbackQuery,state:FSMContext):
+    await state.set_state(ContactSetup.phone); await c.answer()
+    await c.message.answer("📞 Apna phone share karein:",reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📞 Share Phone",request_contact=True)],[KeyboardButton(text="❌ Cancel")]],resize_keyboard=True,one_time_keyboard=True))
+
+@router.message(ContactSetup.phone, F.contact)
+async def contact_phone_save(m: Message,state:FSMContext):
+    if m.contact.user_id and m.contact.user_id != m.from_user.id:
+        return await m.answer("Apna hi Telegram contact share karein.")
+    await db.set_contacts(m.from_user.id,phone=m.contact.phone_number,show_phone=1)
+    await state.clear(); await m.answer("✅ Phone saved. Sirf mutual-match Premium viewers ko visible hoga.",reply_markup=ReplyKeyboardRemove())
+    await show_contact_setup(m.from_user.id,m.bot,state)
+
+@router.message(ContactSetup.phone)
+async def contact_phone_text(m: Message,state:FSMContext):
+    if m.text and m.text.lower() in ("❌ cancel","cancel","skip"):
+        await state.clear(); return await m.answer("Cancelled.",reply_markup=ReplyKeyboardRemove())
+    if not m.text or len(m.text.strip())<7:
+        return await m.answer("Valid phone number bhejein ya Share Phone button use karein.")
+    await db.set_contacts(m.from_user.id,phone=m.text.strip(),show_phone=1)
+    await state.clear(); await m.answer("✅ Phone saved.",reply_markup=ReplyKeyboardRemove()); await show_contact_setup(m.from_user.id,m.bot,state)
+
+@router.callback_query(F.data=="contactsetup:social")
+async def contact_social(c: CallbackQuery,state:FSMContext):
+    await state.set_state(ContactSetup.socials); await c.answer()
+    await c.message.answer("🔗 Social links ek line me bhejein: instagram=https://... facebook=https://... other=https://...")
+
+@router.message(ContactSetup.socials)
+async def contact_social_save(m: Message,state:FSMContext):
+    vals={}
+    for token in (m.text or "").split():
+        if "=" not in token: continue
+        k,v=token.split("=",1); k=k.lower().strip(); v=v.strip()
+        if k=="instagram": vals["instagram"]=v
+        elif k=="facebook": vals["facebook"]=v
+        elif k in ("other","social"): vals["other_social"]=v
+    if not vals: return await m.answer("Format: instagram=https://... facebook=https://... other=https://...")
+    vals["show_social"]=1; await db.set_contacts(m.from_user.id,**vals); await state.clear()
+    await m.answer("✅ Social links saved. Premium + mutual match viewers ko hi visible honge.",reply_markup=k.main_menu())
 
 @router.message(Command("setcontacts"))
 async def setcontacts(m: Message):
     u = await db.get_user(m.from_user.id)
-    if not is_premium(u):
-        return await m.answer("🔐 Contact details sirf Premium users set kar sakte hain.", reply_markup=k.premium_kb())
     text = (m.text or "").partition(" ")[2].strip()
+    vals={"telegram_username": u.get("username")} if u.get("username") else {}
     if not text:
-        return await m.answer("Example: /setcontacts telegram=@name phone=9999999999 instagram=https://instagram.com/name")
-    vals = {}
+        await db.set_contacts(m.from_user.id, **vals) if vals else None
+        return await m.answer("Use /contacts for guided setup. Telegram username automatically detected ho jata hai.")
     for token in text.split():
         if "=" in token:
-            key, val = token.split("=", 1); key = key.strip().lower(); val = val.strip()
-            if key == "telegram": vals["telegram_username"] = val.lstrip("@")
-            elif key == "phone": vals["phone"] = val
-            elif key == "instagram": vals["instagram"] = val
-            elif key == "facebook": vals["facebook"] = val
-            elif key == "other": vals["other_social"] = val
-            elif key in ("show_telegram","show_phone","show_social"):
-                vals[key] = 1 if val.lower() in ("1","yes","true","on") else 0
-    if not vals:
-        return await m.answer("Koi valid contact field nahi mila.")
-    await db.set_contacts(m.from_user.id, **vals)
-    await m.answer("✅ Contact details saved. Ye mutual-match Premium viewers ko hi visible honge.")
+            key,val=token.split("=",1); key=key.lower().strip(); val=val.strip()
+            if key=="telegram": vals["telegram_username"]=val.lstrip("@")
+            elif key=="phone": vals["phone"]=val
+            elif key=="instagram": vals["instagram"]=val
+            elif key=="facebook": vals["facebook"]=val
+            elif key=="other": vals["other_social"]=val
+            elif key in ("show_telegram","show_phone","show_social"): vals[key]=1 if val.lower() in ("1","yes","true","on") else 0
+    if not vals: return await m.answer("No valid contact field found. /contacts use karein.")
+    await db.set_contacts(m.from_user.id,**vals)
+    await m.answer("✅ Contact details saved. Premium + mutual-match viewers ko hi visible honge.")
+

@@ -13,9 +13,32 @@ from db import now
 from utils import is_premium, is_boosted
 from handlers import discover, profile, filters
 from handlers.premium import premium_text
-from utils import esc
+from utils import esc, card
 
 router = Router()
+
+
+class Support(StatesGroup):
+    message = State()
+
+async def send_support(bot, uid, state):
+    await state.set_state(Support.message)
+    await bot.send_message(uid,"🆘 <b>Help & Support</b>\nApni problem/message yahin bhejein. Admin team ko forward kar diya jayega.")
+
+@router.message(Command("support", "contactadmin"))
+async def cmd_support(m: Message, state: FSMContext, bot: Bot):
+    await send_support(bot,m.from_user.id,state)
+
+@router.message(Support.message)
+async def support_message(m: Message, state: FSMContext, bot: Bot):
+    if not m.text:
+        return await m.answer("Support ke liye text message bhejein.")
+    uid=m.from_user.id; u=await db.get_user(uid); await state.clear()
+    for a in __import__('config').ADMIN_IDS:
+        try:
+            await bot.send_message(a,f"🆘 <b>Support Request</b>\n👤 {esc(u.get('name') or m.from_user.full_name)}\n🆔 <code>{uid}</code>\n\n{esc(m.text)}",reply_markup=k.kb([[k.B(text="✉️ Reply User",callback_data=f"adm:msg:{uid}")]]))
+        except Exception: pass
+    await m.answer("✅ Aapka message admin ko bhej diya gaya hai. Jaldi reply milega.",reply_markup=k.main_menu())
 
 
 class Ice(StatesGroup):
@@ -43,6 +66,9 @@ async def menu_cb(c: CallbackQuery, bot: Bot, state: FSMContext):
         "premium": lambda: send_premium(bot, uid),
         "coins": lambda: send_coins(bot, uid),
         "filters": lambda: filters.send_filters(bot, uid),
+        "support": lambda: send_support(bot, uid, state),
+        "views": lambda: send_views(bot, uid),
+        "stats": lambda: send_stats(bot, uid),
     }
     if what in actions:
         await actions[what]()
@@ -173,17 +199,30 @@ async def send_premium(bot, uid):
 
 
 # ---------- stats / help ----------
-@router.message(Command("stats"))
-async def cmd_stats(m: Message):
-    uid = m.from_user.id
+async def send_views(bot, uid):
+    u=await db.get_user(uid); viewers=await db.get_profile_viewers(uid,50)
+    if not viewers:
+        return await bot.send_message(uid,"👁 Abhi kisi ne aapki profile uniquely view nahi ki hai.")
+    await bot.send_message(uid,f"👁 <b>Profile Views</b> — {len(viewers)} recent viewers")
+    for v in viewers:
+        await bot.send_message(uid, card(v, viewer=u), reply_markup=k.kb([[k.B(text="👤 View Profile",callback_data=f"viewprofile:{v['id']}")]]))
+
+async def send_stats(bot, uid):
     u = await db.get_user(uid)
     likes_given = await db.count_likes_given(uid)
     likes_recv = await db.count_likes_received(uid)
     matches = len(await db.get_matches(uid))
     rate = f"{matches / likes_given * 100:.0f}%" if likes_given else "0%"
-    await m.answer(f"📊 <b>Your Stats</b>\n👁 Profile views: {u['views']}\n❤️ Likes diye: {likes_given}\n"
-                   f"💌 Likes mile: {likes_recv}\n💞 Matches: {matches}\n🎯 Match rate: {rate}\n"
-                   f"🔥 Streak: {u['streak']} din")
+    await bot.send_message(uid, f"📊 <b>Your Stats</b>\n👁 Profile views: {u['views']}\n❤️ Likes diye: {likes_given}\n"
+                   f"💌 Likes mile: {likes_recv}\n💞 Matches: {matches}\n🎯 Match rate: {rate}\n🔥 Streak: {u['streak']} din")
+
+@router.message(Command("views"))
+async def cmd_views(m: Message, bot: Bot):
+    await send_views(bot,m.from_user.id)
+
+@router.message(Command("stats"))
+async def cmd_stats(m: Message, bot: Bot):
+    await send_stats(bot,m.from_user.id)
 
 
 @router.message(Command("help"))

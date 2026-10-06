@@ -41,9 +41,32 @@ async def show_next(bot: Bot, uid: int, target_id: int | None = None):
                 [k.B(text="⚙️ Filters", callback_data="m:filters"), k.B(text="📍 Nearby", callback_data="m:nearby")],
                 [k.B(text="🔄 Discover Again", callback_data="m:find"), k.B(text="🏠 Menu", callback_data="m:menu")]
             ]))
-    await db.add_view(c["id"], uid)
+    view_count, is_new_view = await db.add_view(c["id"], uid)
+    if is_new_view:
+        try:
+            await bot.send_message(c["id"], f"👀 <b>{esc(u.get('name') or 'Someone')}</b> ne aapki profile dekhi.")
+        except Exception: pass
+        # Engagement achievements are unlocked once and never spammed.
+        thresholds = [(10,"profile_10_views","👀 Getting Noticed","Aapki profile ko 10 unique people ne dekha!"),
+                      (50,"profile_50_views","🌟 Popular Profile","Aapki profile 50 unique views cross kar chuki hai!"),
+                      (100,"profile_100_views","🔥 Trending","Aapki profile 100 unique views cross kar chuki hai!")]
+        for threshold,key,title,desc in thresholds:
+            if view_count >= threshold and await db.unlock_achievement(c["id"],key,title,desc):
+                try: await bot.send_message(c["id"], f"🏆 <b>Achievement Unlocked!</b>\n{title}\n{desc}")
+                except Exception: pass
     await send_profile(bot, uid, c, u)
 
+
+
+
+@router.callback_query(F.data.startswith("viewprofile:"))
+async def view_profile_callback(c: CallbackQuery, bot: Bot):
+    target=int(c.data.split(":")[1]); me=await db.get_user(c.from_user.id); u=await db.get_user(target)
+    if not u or not u.get("profile_done") or u.get("banned") or not u.get("active"):
+        return await c.answer("Profile ab available nahi hai.",show_alert=True)
+    await c.answer()
+    await db.add_view(target,c.from_user.id)
+    await send_profile(bot,c.from_user.id,u,me)
 
 @router.message(Command("find", "discover"))
 async def cmd_find(m: Message, bot: Bot):
@@ -119,7 +142,21 @@ async def swipe(c: CallbackQuery, bot: Bot):
 
     await db.add_swipe(uid, tid, action)
     target = await db.get_user(tid)
+    if target and action in ("like", "super", "pass"):
+        try:
+            label = "❤️ Like" if action == "like" else ("⭐ Super Like" if action == "super" else "👎 Skip")
+            await bot.send_message(tid, f"🔔 <b>Profile Activity</b>\n<b>{esc(me.get('name') or 'Someone')}</b> ne aapki profile par {label} kiya.")
+        except Exception: pass
     if action in ("like", "super") and target:
+        # Popularity achievements based on received likes.
+        recv = int((await db.get_user(tid)).get("likes_received") or 0)
+        thresholds = [(10,"likes_10","❤️ Loved Profile","10 likes receive hue!"),
+                      (25,"likes_25","💖 Crowd Favourite","25 likes receive hue!"),
+                      (50,"likes_50","🔥 Most Wanted","50 likes receive hue!")]
+        for threshold,key,title,desc in thresholds:
+            if recv >= threshold and await db.unlock_achievement(tid,key,title,desc):
+                try: await bot.send_message(tid, f"🏆 <b>Achievement Unlocked!</b>\n{title}\n{desc}")
+                except Exception: pass
         if await db.liked_me(uid, tid):
             await notify_match(bot, me, target)
         elif action == "super":
@@ -143,16 +180,27 @@ async def cmd_matches(m: Message, bot: Bot):
     await send_matches(bot, m.from_user.id)
 
 
-async def send_matches(bot, uid):
+async def send_matches(bot, uid, page=0):
     ms = await db.get_matches(uid)
     if not ms:
         return await bot.send_message(uid, "💔 Abhi koi match nahi. /find karte rahein!")
-    for u in ms[:20]:
+    page=max(0,int(page)); per_page=10; total_pages=(len(ms)+per_page-1)//per_page
+    if page>=total_pages: page=total_pages-1
+    await bot.send_message(uid, f"💞 <b>Your Matches</b> — {len(ms)} total\\nPage {page+1}/{total_pages}")
+    for u in ms[page*per_page:(page+1)*per_page]:
         markup = k.match_actions(u["id"])
         if u.get("photo"):
-            await bot.send_photo(uid, u["photo"], caption=card(u), reply_markup=markup)
+            await bot.send_photo(uid, u["photo"], caption=card(u, viewer=await db.get_user(uid)), reply_markup=markup)
         else:
-            await bot.send_message(uid, card(u), reply_markup=markup)
+            await bot.send_message(uid, card(u, viewer=await db.get_user(uid)), reply_markup=markup)
+    nav=[]
+    if page>0: nav.append(k.B(text="⬅️ Previous",callback_data=f"matches:page:{page-1}"))
+    if page<total_pages-1: nav.append(k.B(text="Next ➡️",callback_data=f"matches:page:{page+1}"))
+    if nav: await bot.send_message(uid,"📚 More matches:",reply_markup=k.kb([nav,[k.B(text="🏠 Menu",callback_data="m:menu")]]))
+
+@router.callback_query(F.data.startswith("matches:page:"))
+async def matches_page(c: CallbackQuery, bot: Bot):
+    page=int(c.data.split(":")[2]); await c.answer(); await send_matches(bot,c.from_user.id,page)
 
 
 @router.message(Command("likes"))
@@ -162,15 +210,23 @@ async def cmd_likes(m: Message, bot: Bot):
 
 async def send_likes(bot, uid):
     me = await db.get_user(uid)
-    ls = await db.who_liked_me(uid)
-    if not ls:
-        return await bot.send_message(uid, "Abhi koi pending like nahi.")
-    if not is_premium(me):
-        return await bot.send_message(
-            uid, f"👀 <b>{len(ls)}</b> logon ne aapko like kiya hai!\n💎 Premium lekar dekhein ki kaun.",
-            reply_markup=k.premium_kb())
-    for u in ls[:20]:
-        await send_profile(bot, uid, u, me)
+    incoming = await db.who_liked_me(uid)
+    outgoing = await db.get_liked_profiles(uid)
+    if not incoming and not outgoing:
+        return await bot.send_message(uid, "👀 Abhi Likes section me koi profile nahi hai.")
+    await bot.send_message(uid, f"👀 <b>Likes</b>\n❤️ Aapne like kiya: <b>{len(outgoing)}</b>\n💌 Aapko like mila: <b>{len(incoming)}</b>")
+    if outgoing:
+        await bot.send_message(uid, "❤️ <b>Your Likes</b>")
+        for u in outgoing[:30]:
+            await send_profile(bot, uid, u, me)
+    if incoming:
+        if not is_premium(me):
+            return await bot.send_message(uid,
+                f"💌 <b>{len(incoming)}</b> users ne aapko like kiya hai.\n💎 Premium lekar sabhi profiles dekhein aur match karein.",
+                reply_markup=k.premium_kb())
+        await bot.send_message(uid, "💌 <b>People Who Liked You</b>")
+        for u in incoming[:30]:
+            await send_profile(bot, uid, u, me)
 
 
 # ---------- daily pick ----------
@@ -225,7 +281,12 @@ async def cmd_nearby(m: Message, bot: Bot):
 async def contacts(c: CallbackQuery):
     target = int(c.data.split(":")[1]); me = c.from_user.id
     if not await db.can_view_contacts(me, target):
-        return await c.answer("🔐 Contacts sirf Premium + mutual match ke liye hain.", show_alert=True)
+        await c.answer("💎 Premium required", show_alert=True)
+        return await c.message.answer(
+            "🔐 <b>Premium Contacts Locked</b>\n\n"
+            "💎 Premium Membership ke baad mutual matches ke phone, Telegram username aur social links dekh sakte hain.\n"
+            "♾ Unlimited new chats bhi unlock honge.",
+            reply_markup=k.premium_kb())
     x = await db.get_contacts(target)
     if not x:
         return await c.answer("Is user ne contact details add nahi ki hain.", show_alert=True)
@@ -256,5 +317,12 @@ async def rate_save(c: CallbackQuery):
     if not any(int(x["id"]) == target for x in await db.get_matches(c.from_user.id)):
         return await c.answer("Rating sirf matched users ko de sakte hain.", show_alert=True)
     avg, count = await db.add_rating(c.from_user.id, target, value)
+    rater = await db.get_user(c.from_user.id)
+    try:
+        await c.bot.send_message(target, f"⭐ <b>{esc(rater.get('name') or 'Someone')}</b> ne aapki profile ko {value}/5 rate kiya. New rating: {avg:.1f}/5")
+    except Exception: pass
+    if count >= 10 and await db.unlock_achievement(target,"rated_10","⭐ Highly Rated","Aapki profile ko 10 ratings mil chuki hain!"):
+        try: await c.bot.send_message(target,"🏆 <b>Achievement Unlocked!</b> ⭐ Highly Rated\n10 ratings complete!")
+        except Exception: pass
     await c.answer(f"⭐ Rating saved: {value}/5")
     await c.message.answer(f"✅ Rating saved. Profile rating: {avg:.1f}/5 ({count} ratings)")
