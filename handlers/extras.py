@@ -48,6 +48,11 @@ async def menu_cb(c: CallbackQuery, bot: Bot, state: FSMContext):
         await actions[what]()
 
 
+
+@router.message(Command("menu"))
+async def cmd_menu(m: Message, bot: Bot):
+    await bot.send_message(m.from_user.id, "🏠 <b>ConnectMate Main Menu</b>", reply_markup=k.main_menu())
+
 # ---------- mood ----------
 async def send_mood(bot, uid):
     await bot.send_message(

@@ -34,13 +34,18 @@ async def show_next(bot: Bot, uid: int, target_id: int | None = None):
         c = await db.get_candidate(u)
     if not c:
         return await bot.send_message(
-            uid, "😴 Abhi koi nayi profile nahi. Thodi der baad aayein ya 🚀 /boost karein!",
-            reply_markup=k.main_menu())
+            uid,
+            "😴 <b>Abhi koi suitable profile nahi mili.</b>\n\n"
+            "⚙️ Filters check karein, location/distance badhayein, ya thodi der baad dobara Discover karein.",
+            reply_markup=k.kb([
+                [k.B(text="⚙️ Filters", callback_data="m:filters"), k.B(text="📍 Nearby", callback_data="m:nearby")],
+                [k.B(text="🔄 Discover Again", callback_data="m:find"), k.B(text="🏠 Menu", callback_data="m:menu")]
+            ]))
     await db.add_view(c["id"], uid)
     await send_profile(bot, uid, c, u)
 
 
-@router.message(Command("find"))
+@router.message(Command("find", "discover"))
 async def cmd_find(m: Message, bot: Bot):
     await show_next(bot, m.from_user.id)
 
@@ -191,11 +196,19 @@ async def cmd_pick(m: Message, bot: Bot):
 async def send_nearby(bot, uid):
     me = await db.get_user(uid)
     if me["lat"] is None:
-        return await bot.send_message(uid, "📍 Pehle Profile > Edit > Location se location set karein.")
+        return await bot.send_message(
+            uid,
+            "📍 <b>Nearby ke liye location zaroori hai.</b>\nLocation share karne ke baad main aapko nearest profiles distance ke order me dikhaunga.",
+            reply_markup=k.location_kb())
     pool = await db.get_pool(me, limit=300, need_location=True)
     pool = sorted(((distance_km(me, u), u) for u in pool), key=lambda x: x[0])
     if not pool:
-        return await bot.send_message(uid, "Aas-paas koi nahi mila.")
+        return await bot.send_message(
+            uid,
+            "📍 <b>Aas-paas abhi koi suitable profile nahi mili.</b>\n\n"
+            "⚙️ Distance filter badhayein ya Discover me broader matches dekhein.",
+            reply_markup=k.kb([[k.B(text="⚙️ Filters", callback_data="m:filters"), k.B(text="🔥 Discover", callback_data="m:find")],
+                               [k.B(text="🏠 Menu", callback_data="m:menu")]]))
     limit = 10 if is_premium(me) else 3
     for _, u in pool[:limit]:
         await send_profile(bot, uid, u, me)
