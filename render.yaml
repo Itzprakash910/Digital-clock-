@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: connectmate-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DATABASE_BACKEND
+        value: mongo
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: connectmate
+      - key: PAYMENT_PROVIDER_TOKEN
+        sync: false
+      - key: CURRENCY
+        value: INR
+      - key: PORT
+        value: 10000

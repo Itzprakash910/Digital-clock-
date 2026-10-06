@@ -17,6 +17,7 @@ def now() -> int:
 # Purane DB ke liye auto-migration (naye columns)
 USER_COLUMNS = {
     "first_name": "TEXT", "last_name": "TEXT", "language": "TEXT",
+    "min_age": "BIGINT DEFAULT 18", "max_age": "BIGINT DEFAULT 99", "max_distance": "DOUBLE PRECISION DEFAULT 100", "online_only": "BIGINT DEFAULT 0",
     "tg_premium": "BIGINT DEFAULT 0", "ref_rewarded": "BIGINT DEFAULT 0",
     "blocked": "BIGINT DEFAULT 0", "last_active": "BIGINT DEFAULT 0",
     "profile_at": "BIGINT DEFAULT 0",
@@ -29,7 +30,7 @@ def _schema() -> str:
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT PRIMARY KEY, first_name TEXT, last_name TEXT, name TEXT, username TEXT,
   language TEXT, tg_premium BIGINT DEFAULT 0,
-  age BIGINT, gender TEXT, looking_for TEXT DEFAULT 'all',
+  age BIGINT, gender TEXT, looking_for TEXT DEFAULT 'all', min_age BIGINT DEFAULT 18, max_age BIGINT DEFAULT 99, max_distance DOUBLE PRECISION DEFAULT 100, online_only BIGINT DEFAULT 0,
   bio TEXT, interests TEXT DEFAULT '', photo TEXT,
   lat DOUBLE PRECISION, lon DOUBLE PRECISION, mood TEXT, mood_at BIGINT DEFAULT 0,
   icebreaker TEXT, premium_until BIGINT DEFAULT 0, boost_until BIGINT DEFAULT 0,
@@ -44,12 +45,36 @@ CREATE TABLE IF NOT EXISTS swipes (
 );
 CREATE INDEX IF NOT EXISTS idx_sw_from ON swipes(from_id, to_id);
 CREATE INDEX IF NOT EXISTS idx_sw_to ON swipes(to_id, type);
+CREATE TABLE IF NOT EXISTS profile_views (profile_id BIGINT, viewer_id BIGINT, ts BIGINT, UNIQUE(profile_id,viewer_id));
+CREATE TABLE IF NOT EXISTS ratings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id BIGINT, rater_id BIGINT, rating BIGINT, ts BIGINT,
+  UNIQUE(profile_id,rater_id)
+);
+CREATE TABLE IF NOT EXISTS contacts (
+  user_id BIGINT PRIMARY KEY, telegram_username TEXT, phone TEXT, instagram TEXT,
+  facebook TEXT, other_social TEXT, show_telegram BIGINT DEFAULT 1,
+  show_phone BIGINT DEFAULT 0, show_social BIGINT DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, chat_key TEXT, sender_id BIGINT,
+  receiver_id BIGINT, text TEXT, ts BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages ON chat_messages(chat_key,ts);
 CREATE TABLE IF NOT EXISTS reports (
   id {pk}, reporter BIGINT, reported BIGINT, ts BIGINT
 );
 CREATE TABLE IF NOT EXISTS payments (
   id {pk}, user_id BIGINT, plan TEXT, amount BIGINT, currency TEXT,
   charge_id TEXT, ts BIGINT
+);
+CREATE TABLE IF NOT EXISTS profile_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id BIGINT, photo TEXT NOT NULL,
+  caption TEXT, position BIGINT DEFAULT 0, created BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_posts_user ON profile_posts(user_id, position);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  chat_key TEXT PRIMARY KEY, user_a BIGINT, user_b BIGINT,
+  first_started BIGINT, last_started BIGINT
 );
 CREATE TABLE IF NOT EXISTS broadcasts (
   id {pk}, admin_id BIGINT, title TEXT, description TEXT, image TEXT,
@@ -195,6 +220,7 @@ async def reset_profile(uid):
         """UPDATE users SET age=NULL, gender=NULL, bio=NULL, interests='', photo=NULL,
            lat=NULL, lon=NULL, mood=NULL, icebreaker=NULL, profile_done=0 WHERE id=?""", (uid,))
     await execute("DELETE FROM swipes WHERE from_id=? OR to_id=?", (uid, uid))
+    await execute("DELETE FROM profile_posts WHERE user_id=?", (uid,))
 
 
 async def count_referrals(uid):
@@ -259,25 +285,44 @@ _BASE = """FROM users WHERE id!=? AND profile_done=1 AND banned=0 AND active=1 A
 
 
 async def get_candidate(u):
-    t = now()
-    return await fetchone(
-        f"""SELECT * {_BASE}
-            ORDER BY (boost_until>?) DESC,
-                     (mood IS NOT NULL AND mood=? AND mood_at>?) DESC,
-                     RANDOM() LIMIT 1""",
-        (u["id"], u["id"], u["looking_for"], u["looking_for"], u["gender"],
-         t, u["mood"] or "", t - 86400))
+    rows = await get_pool(u, 100)
+    if not rows: return None
+    # Simple ranking: boosted, nearby, recent activity.
+    from utils import distance_km
+    def score(x):
+        d=distance_km(u,x)
+        dist=0 if d is None else min(d,500)
+        engagement=min(100,(x.get("views",0) or 0)*.02+(x.get("likes_received",0) or 0)*2+(x.get("rating_avg",0) or 0)*10)
+        recent=min(30,max(0,(x.get("last_active",0)-(now()-7*86400))/(7*86400)*30))
+        boost=1000 if (x.get("boost_until") or 0)>now() else 0
+        return boost+(300-min(dist,300))+engagement+recent
+    rows.sort(key=score,reverse=True)
+    return rows[0]
 
 
 async def get_pool(u, limit=300, need_location=False):
     extra = " AND lat IS NOT NULL" if need_location else ""
-    return await fetchall(
-        f"SELECT * {_BASE}{extra} ORDER BY RANDOM() LIMIT {int(limit)}",
+    rows = await fetchall(f"SELECT * {_BASE}{extra} ORDER BY RANDOM() LIMIT {int(limit)}",
         (u["id"], u["id"], u["looking_for"], u["looking_for"], u["gender"]))
+    from utils import distance_km
+    out=[]
+    for x in rows:
+        age=x.get("age")
+        if age is not None and not (int(u.get("min_age") or 18) <= int(age) <= int(u.get("max_age") or 99)): continue
+        if int(u.get("online_only") or 0) and x.get("last_active",0) < now()-900: continue
+        if u.get("lat") is not None and x.get("lat") is not None:
+            d=distance_km(u,x)
+            if d is not None and d > float(u.get("max_distance") or 100): continue
+        out.append(x)
+    return out
 
 
-async def add_view(uid):
+async def add_view(uid, viewer_id=None):
     await execute("UPDATE users SET views=views+1 WHERE id=?", (uid,))
+    if viewer_id is not None and int(viewer_id)!=int(uid):
+        await execute("INSERT INTO profile_views(profile_id,viewer_id,ts) VALUES(?,?,?) "
+                      "ON CONFLICT(profile_id,viewer_id) DO UPDATE SET ts=excluded.ts",
+                      (uid,viewer_id,now()))
 
 
 async def add_report(reporter, reported):
@@ -387,3 +432,98 @@ async def finish_broadcast(bid, sent, failed, blocked):
 
 async def recent_broadcasts(limit=10):
     return await fetchall("SELECT * FROM broadcasts ORDER BY id DESC LIMIT ?", (limit,))
+
+
+# ---------- ConnectMate additions ----------
+async def add_post(uid, photo, caption=""):
+    r = await fetchone("SELECT COALESCE(MAX(position),0)+1 AS p FROM profile_posts WHERE user_id=?", (uid,))
+    pos = int(r["p"] or 1)
+    return await insert_id("INSERT INTO profile_posts(user_id,photo,caption,position,created) VALUES(?,?,?,?,?)",
+                           (uid, photo, caption, pos, now()))
+
+async def list_posts(uid):
+    return await fetchall("SELECT * FROM profile_posts WHERE user_id=? ORDER BY position,id", (uid,))
+
+async def delete_post(uid, post_id):
+    r = await fetchone("SELECT id FROM profile_posts WHERE id=? AND user_id=?", (post_id, uid))
+    if not r: return False
+    await execute("DELETE FROM profile_posts WHERE id=? AND user_id=?", (post_id, uid))
+    rows = await list_posts(uid)
+    for i,row in enumerate(rows,1):
+        await execute("UPDATE profile_posts SET position=? WHERE id=?", (i,row["id"]))
+    return True
+
+async def add_rating(rater, profile_id, value):
+    value=max(1,min(5,int(value)))
+    # one rating per rater/profile
+    await execute("DELETE FROM ratings WHERE profile_id=? AND rater_id=?", (profile_id,rater))
+    await execute("INSERT INTO ratings(profile_id,rater_id,rating,ts) VALUES(?,?,?,?)",
+                  (profile_id,rater,value,now()))
+    r=await fetchone("SELECT AVG(rating) AS avg, COUNT(*) AS c FROM ratings WHERE profile_id=?", (profile_id,))
+    avg=round(float(r["avg"] or 0),2); count=int(r["c"] or 0)
+    await update_user(profile_id,rating_avg=avg,rating_count=count)
+    return avg,count
+
+async def get_rating(rater, profile_id):
+    r=await fetchone("SELECT rating FROM ratings WHERE profile_id=? AND rater_id=?", (profile_id,rater))
+    return r["rating"] if r else None
+
+async def set_contacts(uid, **contacts):
+    allowed={"telegram_username","phone","instagram","facebook","other_social","show_telegram","show_phone","show_social"}
+    vals={k:v for k,v in contacts.items() if k in allowed}
+    if not vals: return
+    existing=await fetchone("SELECT * FROM contacts WHERE user_id=?", (uid,))
+    if not existing:
+        await execute("INSERT INTO contacts(user_id) VALUES(?)",(uid,))
+    for k,v in vals.items():
+        await execute(f"UPDATE contacts SET {k}=? WHERE user_id=?",(v,uid))
+
+async def get_contacts(uid):
+    return await fetchone("SELECT * FROM contacts WHERE user_id=?", (uid,))
+
+async def can_view_contacts(viewer_id, profile_id):
+    if int(viewer_id)==int(profile_id): return True
+    v=await get_user(viewer_id)
+    if not v or (v.get("premium_until") or 0)<=now(): return False
+    ms=await get_matches(viewer_id)
+    return any(int(x["id"])==int(profile_id) for x in ms)
+
+async def _chat_key(a,b):
+    a,b=sorted((int(a),int(b))); return f"{a}:{b}"
+
+async def has_chat_session(a,b):
+    return bool(await fetchone("SELECT 1 FROM chat_sessions WHERE chat_key=?", (await _chat_key(a,b),)))
+
+async def start_chat_session(a,b):
+    key=await _chat_key(a,b); t=now()
+    await execute("""INSERT INTO chat_sessions(chat_key,user_a,user_b,first_started,last_started)
+                     VALUES(?,?,?,?,?) ON CONFLICT(chat_key) DO UPDATE SET last_started=excluded.last_started""",
+                  (key,*sorted((int(a),int(b))),t,t))
+
+async def count_chat_starts_today(uid):
+    r=await fetchone("SELECT COUNT(*) AS c FROM chat_sessions WHERE first_started> ? AND (user_a=? OR user_b=?)",
+                     (now()-86400,uid,uid))
+    return int(r["c"] or 0)
+
+async def save_chat_message(sender_id, receiver_id, text):
+    key=await _chat_key(sender_id,receiver_id)
+    await execute("INSERT INTO chat_messages(chat_key,sender_id,receiver_id,text,ts) VALUES(?,?,?,?,?)",
+                  (key,sender_id,receiver_id,text,now()))
+
+async def get_chat_messages(user_id,other_id,limit=50):
+    key=await _chat_key(user_id,other_id)
+    return await fetchall("SELECT * FROM chat_messages WHERE chat_key=? ORDER BY ts DESC LIMIT ?",(key,limit))
+
+async def count_likes_given(uid):
+    r=await fetchone("SELECT COUNT(*) AS c FROM swipes WHERE from_id=? AND type IN ('like','super')",(uid,))
+    return int(r["c"] or 0)
+async def count_likes_received(uid):
+    r=await fetchone("SELECT COUNT(*) AS c FROM swipes WHERE to_id=? AND type IN ('like','super')",(uid,))
+    return int(r["c"] or 0)
+
+async def delete_user(uid):
+    for table,col in (("swipes","from_id"),("swipes","to_id"),("reports","reporter"),("reports","reported"),
+                      ("payments","user_id"),("profile_posts","user_id"),("profile_views","profile_id"),
+                      ("ratings","profile_id")):
+        await execute(f"DELETE FROM {table} WHERE {col}=?", (uid,))
+    await execute("DELETE FROM users WHERE id=?", (uid,))

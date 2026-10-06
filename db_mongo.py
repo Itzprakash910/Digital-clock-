@@ -21,7 +21,9 @@ def now(): return int(time.time())
 def _doc(d):
     if not d: return None
     d = dict(d)
-    d.pop("_id", None)
+    oid = d.pop("_id", None)
+    if oid is not None and "id" not in d:
+        d["id"] = str(oid)
     return d
 
 
@@ -48,6 +50,10 @@ async def init_db():
     await mongo.chats.create_index([("participants", ASCENDING)])
     await mongo.chat_messages.create_index([("chat_key", ASCENDING), ("ts", ASCENDING)])
     await mongo.admin_logs.create_index([("ts", DESCENDING)])
+    await mongo.profile_posts.create_index([("user_id", ASCENDING), ("position", ASCENDING)])
+    await mongo.chat_sessions.create_index([("chat_key", ASCENDING)], unique=True)
+    await mongo.chat_sessions.create_index([("user_a", ASCENDING), ("first_started", DESCENDING)])
+    await mongo.chat_sessions.create_index([("user_b", ASCENDING), ("first_started", DESCENDING)])
 
 
 async def close_db():
@@ -71,7 +77,8 @@ async def create_user(tg, referred_by=None):
     doc = {
         "id": int(tg.id), "first_name": fn, "last_name": ln, "name": fn, "username": un,
         "language": lang, "tg_premium": tgp, "age": None, "gender": None,
-        "looking_for": "all", "bio": None, "interests": "", "photo": None,
+        "looking_for": "all", "bio": None,
+        "min_age": 18, "max_age": 99, "max_distance": 100, "online_only": 0, "interests": "", "photo": None,
         "lat": None, "lon": None, "location": None, "mood": None, "mood_at": 0,
         "icebreaker": None, "premium_until": 0, "boost_until": 0, "coins": 0,
         "ref_code": secrets.token_hex(4).upper(), "referred_by": referred_by,
@@ -124,6 +131,7 @@ async def reset_profile(uid):
         "icebreaker": None, "profile_done": 0,
     }})
     await mongo.swipes.delete_many({"$or": [{"from_id": int(uid)}, {"to_id": int(uid)}]})
+    await mongo.profile_posts.delete_many({"user_id": int(uid)})
 
 
 async def count_referrals(uid): return await mongo.users.count_documents({"referred_by": int(uid)})
@@ -201,7 +209,20 @@ async def get_pool(u, limit=300, need_location=False):
     q["id"] = {"$ne": int(u["id"]), "$nin": await _seen_ids(u["id"])}
     if need_location: q["lat"] = {"$ne": None}
     rows = [_doc(x) async for x in mongo.users.find(q).limit(int(limit))]
-    return rows
+    min_age=int(u.get("min_age") or 18); max_age=int(u.get("max_age") or 99)
+    max_dist=float(u.get("max_distance") or 100)
+    online=bool(u.get("online_only"))
+    from utils import distance_km
+    out=[]
+    for x in rows:
+        age=x.get("age")
+        if age is not None and not (min_age <= int(age) <= max_age): continue
+        if online and (x.get("last_active",0) < now()-900): continue
+        if u.get("lat") is not None and x.get("lat") is not None and max_dist < 99999:
+            d=distance_km(u,x)
+            if d is not None and d > max_dist: continue
+        out.append(x)
+    return out
 
 
 async def get_candidate(u):
@@ -364,3 +385,57 @@ async def execute(q, args=()):
     if q2.startswith("INSERT INTO PAYMENTS"):
         return await add_payment(args[0], args[1], args[2], args[3], args[4])
     raise RuntimeError("Raw SQL execute is not supported on MongoDB; use a db_* helper")
+
+
+# ---------- ConnectMate additions ----------
+async def add_post(uid, photo, caption=""):
+    r=await mongo.profile_posts.find_one({"user_id":int(uid)}, sort=[("position",DESCENDING)])
+    pos=int(r.get("position",0))+1 if r else 1
+    x=await mongo.profile_posts.insert_one({"user_id":int(uid),"photo":photo,"caption":caption or "",
+                                            "position":pos,"created":now()})
+    return str(x.inserted_id)
+
+async def list_posts(uid):
+    return [_doc(x) async for x in mongo.profile_posts.find({"user_id":int(uid)}).sort([("position",ASCENDING),("_id",ASCENDING)])]
+
+async def delete_post(uid, post_id):
+    from bson import ObjectId
+    try: oid=ObjectId(str(post_id))
+    except Exception: return False
+    r=await mongo.profile_posts.delete_one({"_id":oid,"user_id":int(uid)})
+    if not r.deleted_count: return False
+    rows=await list_posts(uid)
+    for i,row in enumerate(rows,1):
+        await mongo.profile_posts.update_one({"_id":row.get("_id") or ObjectId(str(row["id"]))},{"$set":{"position":i}})
+    return True
+
+async def _chat_key(a,b):
+    a,b=sorted((int(a),int(b))); return f"{a}:{b}"
+
+async def has_chat_session(a,b):
+    return bool(await mongo.chat_sessions.find_one({"chat_key":await _chat_key(a,b)}))
+
+async def start_chat_session(a,b):
+    key=await _chat_key(a,b); a,b=sorted((int(a),int(b))); t=now()
+    await mongo.chat_sessions.update_one({"chat_key":key},
+        {"$setOnInsert":{"chat_key":key,"user_a":a,"user_b":b,"first_started":t},
+         "$set":{"last_started":t}},upsert=True)
+
+async def count_chat_starts_today(uid):
+    t=now()-86400
+    return int(await mongo.chat_sessions.count_documents({"first_started":{"$gt":t},
+        "$or":[{"user_a":int(uid)},{"user_b":int(uid)}]}))
+
+async def delete_user(uid):
+    uid=int(uid)
+    await mongo.users.delete_one({"id":uid})
+    for col, q in (
+        (mongo.swipes,{"$or":[{"from_id":uid},{"to_id":uid}]}),
+        (mongo.reports,{"$or":[{"reporter":uid},{"reported":uid}]}),
+        (mongo.payments,{"user_id":uid}), (mongo.profile_posts,{"user_id":uid}),
+        (mongo.profile_views,{"$or":[{"profile_id":uid},{"viewer_id":uid}]}),
+        (mongo.ratings,{"$or":[{"profile_id":uid},{"rater_id":uid}]}),
+        (mongo.chat_messages,{"$or":[{"sender_id":uid},{"receiver_id":uid}]}),
+        (mongo.chat_sessions,{"$or":[{"user_a":uid},{"user_b":uid}]}),
+    ):
+        await col.delete_many(q)

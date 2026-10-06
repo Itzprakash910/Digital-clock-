@@ -18,7 +18,7 @@ PRICE_SYMBOL = os.getenv("PRICE_SYMBOL", "₹")
 NOTIFY_NEW_USERS = os.getenv("NOTIFY_NEW_USERS", "1") == "1"
 START_DELAY = int(os.getenv("START_DELAY", "20"))
 
-CURRENCY = os.getenv("CURRENCY", "INR").upper()  # Moldovan Leu (smallest unit bani: 1 MDL = 100)
+CURRENCY = os.getenv("CURRENCY", "INR").upper()
 
 # price = bani (4900 = 49.00 MDL). Telegram ka minimum amount check kar lein.
 PLANS = {
@@ -29,6 +29,8 @@ PLANS = {
 
 FREE_LIKES_PER_DAY = 30
 FREE_SUPER_PER_DAY = 1
+FREE_CHAT_STARTS_PER_DAY = int(os.getenv("FREE_CHAT_STARTS_PER_DAY", "3"))
+MAX_PROFILE_POSTS = int(os.getenv("MAX_PROFILE_POSTS", "4"))
 PREMIUM_SUPER_PER_DAY = 10
 REFERRAL_COINS = 10
 BOOST_COST_COINS = 40

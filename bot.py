@@ -11,12 +11,12 @@ from aiogram.types import BotCommand, Message, CallbackQuery
 
 import db
 from config import BOT_TOKEN, START_DELAY
-from handlers import profile, discover, extras, premium, admin, system, chat
+from handlers import profile, discover, extras, premium, admin, system, chat, posts, filters
 
 # Jin commands/buttons ke liye complete profile chahiye
 NEEDS_PROFILE_CMDS = {"find", "myprofile", "editprofile", "matches", "likes", "dailypick", "nearby",
-                      "mood", "icebreaker", "daily", "boost", "coins", "refer", "premium", "stats"}
-NEEDS_PROFILE_CB = {"m", "sw", "ed", "mood", "pay", "coinbuy"}
+                      "mood", "icebreaker", "daily", "boost", "coins", "refer", "premium", "stats", "posts", "contacts", "setcontacts", "filters"}
+NEEDS_PROFILE_CB = {"m", "sw", "ed", "mood", "pay", "coinbuy", "posts", "flt"}
 
 
 class TrackMiddleware(BaseMiddleware):
@@ -80,7 +80,22 @@ async def main():
     dp.message.outer_middleware(TrackMiddleware())
     dp.callback_query.outer_middleware(TrackMiddleware())
     dp.include_routers(admin.router, premium.router, profile.router,
-                       extras.router, discover.router, chat.router, system.router)
+                       extras.router, discover.router, filters.router, posts.router, chat.router, system.router)
+
+    # ConnectMate branding metadata; BotFather can override these values.
+    try:
+        await bot.set_my_name(name=os.getenv("BOT_NAME", "ConnectMate"))
+        await bot.set_my_short_description(
+            short_description=os.getenv("BOT_SHORT_DESCRIPTION", "💘 ConnectMate — Find your perfect match. Chat, match & connect safely.")
+        )
+        await bot.set_my_description(
+            description=os.getenv("BOT_DESCRIPTION",
+                "💘 ConnectMate is a Telegram dating & social matching bot. "
+                "Create your profile, discover nearby people, Like/Skip, get mutual matches, "
+                "chat privately, add up to 4 profile posts, refer friends and unlock Premium features.")
+        )
+    except Exception:
+        logging.exception("Bot metadata update failed")
 
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Start"),
@@ -98,6 +113,13 @@ async def main():
         BotCommand(command="coins", description="🪙 Coins & refer"),
         BotCommand(command="premium", description="💎 Premium"),
         BotCommand(command="stats", description="📊 Stats"),
+        BotCommand(command="posts", description="📸 Manage profile posts"),
+        BotCommand(command="filters", description="⚙️ Discover filters"),
+        BotCommand(command="contacts", description="🔐 Premium contact settings"),
+        BotCommand(command="setcontacts", description="🔐 Set contact details"),
+        BotCommand(command="chat", description="💬 Chat help"),
+        BotCommand(command="endchat", description="🛑 End current chat"),
+        BotCommand(command="deleteprofile", description="🗑 Delete profile"),
         BotCommand(command="help", description="📚 Help"),
     ])
 
