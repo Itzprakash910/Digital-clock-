@@ -28,3 +28,16 @@
 - For persistent production data, configure MongoDB Atlas (`MONGODB_URI`) and `DATABASE_BACKEND=mongo`.
 - Nearby matching requires users to share Telegram location.
 - Premium payment requires a valid Telegram payment provider configuration; otherwise the Premium UI remains visible but payment cannot be completed.
+
+
+## v1.2 interaction/notification audit
+- Chat relay now includes sender display name.
+- Profile view, Like, Super Like, Skip and Rating notifications added.
+- View/like engagement achievements added with one-time unlocks.
+- Matches shows all mutual matches; Likes shows outgoing likes and premium incoming likes.
+- Reciprocal gender + age preference checks applied to SQLite and MongoDB discovery.
+- MongoDB swipe counters no longer double-count when changing an existing swipe.
+- Contacts/Social guided setup added; Telegram username is auto-detected, phone requires Telegram contact share.
+- Help & Support button/command forwards user messages to admins with reply action.
+- Main/edit menus deduplicated and labels standardized.
+- Telegram Bot API does not support custom inline-button colors; consistent emoji/text styling is used instead.

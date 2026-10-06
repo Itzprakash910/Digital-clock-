@@ -15,8 +15,8 @@ from handlers import profile, discover, extras, premium, admin, system, chat, po
 
 # Jin commands/buttons ke liye complete profile chahiye
 NEEDS_PROFILE_CMDS = {"find", "discover", "myprofile", "editprofile", "matches", "likes", "dailypick", "nearby",
-                      "mood", "icebreaker", "daily", "boost", "coins", "refer", "premium", "stats", "posts", "contacts", "setcontacts", "filters"}
-NEEDS_PROFILE_CB = {"m", "sw", "ed", "mood", "pay", "coinbuy", "posts", "flt"}
+                      "mood", "icebreaker", "daily", "boost", "coins", "refer", "premium", "stats", "posts", "contacts", "setcontacts", "filters", "views"}
+NEEDS_PROFILE_CB = {"m", "sw", "ed", "mood", "pay", "coinbuy", "posts", "flt", "viewprofile", "matches"}
 
 
 class TrackMiddleware(BaseMiddleware):
@@ -115,8 +115,10 @@ async def main():
         BotCommand(command="coins", description="🪙 Coins & refer"),
         BotCommand(command="premium", description="💎 Premium"),
         BotCommand(command="stats", description="📊 Stats"),
+        BotCommand(command="views", description="👁 Profile viewers"),
         BotCommand(command="posts", description="📸 Manage profile posts"),
         BotCommand(command="filters", description="⚙️ Discover filters"),
+        BotCommand(command="support", description="🆘 Contact admin"),
         BotCommand(command="contacts", description="🔐 Premium contact settings"),
         BotCommand(command="setcontacts", description="🔐 Set contact details"),
         BotCommand(command="chat", description="💬 Chat help"),

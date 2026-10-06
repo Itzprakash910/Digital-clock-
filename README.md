@@ -44,3 +44,17 @@ Works with a worker/service that can run `python bot.py` and expose `$PORT` (Ren
 - Profile gallery buttons are available directly from Discover and Matches.
 - `/discover` is now an alias for `/find`.
 - MongoDB is selected only when `MONGODB_URI` is configured; otherwise SQLite fallback is used.
+
+
+## Interaction & notification update (v1.2)
+- Chat messages now show the sender's ConnectMate display name.
+- Users receive profile activity notifications for unique views, likes, super-likes, skips and ratings.
+- One-time achievements unlock for profile views, received likes and ratings, with celebratory messages.
+- Matches are fully accessible through page navigation instead of a hard 20-profile cutoff.
+- Likes contains both profiles you liked and (for Premium) profiles who liked you.
+- Profile Views shows recent unique viewers.
+- Contacts & Social setup is available from Profile settings; Telegram username is auto-detected, while phone must be shared/entered by the user.
+- Help & Support lets users send a message directly to configured admins; admins can reply from the existing admin message flow.
+- Discovery now checks both users' gender and age preferences, plus filters and activity, in SQLite and MongoDB.
+- MongoDB like counters no longer double-count repeated/changed swipes.
+- Telegram inline buttons do not expose custom background colors through the Bot API; styling is standardized with emojis, concise labels and consistent layouts.

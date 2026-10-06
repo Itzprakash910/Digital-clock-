@@ -18,6 +18,8 @@ def main_menu():
         [B(text="🎁 Daily Reward", callback_data="m:daily"), B(text="🚀 Boost", callback_data="m:boost")],
         [B(text="⚙️ Filters", callback_data="m:filters"), B(text="📸 My Posts", callback_data="posts:manage")],
         [B(text="💎 Premium", callback_data="m:premium"), B(text="🪙 Coins/Refer", callback_data="m:coins")],
+        [B(text="👁 Profile Views", callback_data="m:views"), B(text="📊 My Stats", callback_data="m:stats")],
+        [B(text="🆘 Help & Support", callback_data="m:support")],
     ])
 
 
@@ -71,6 +73,7 @@ def edit_kb():
         [B(text="💬 Bio", callback_data="ed:bio"), B(text="🎂 Age", callback_data="ed:age")],
         [B(text="📸 Photo", callback_data="ed:photo"), B(text="🏷 Interests", callback_data="ed:interests")],
         [B(text="📍 Location", callback_data="ed:location"), B(text="🎯 Looking for", callback_data="ed:looking")],
+        [B(text="🔗 Contacts & Social", callback_data="ed:contacts")],
         [B(text="📸 Manage Posts", callback_data="posts:manage")],
         [B(text="⏸ Pause/Resume", callback_data="ed:pause"), B(text="🗑 Delete", callback_data="ed:delete")],
         [B(text="🏠 Menu", callback_data="m:menu")],

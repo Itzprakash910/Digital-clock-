@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS swipes (
 CREATE INDEX IF NOT EXISTS idx_sw_from ON swipes(from_id, to_id);
 CREATE INDEX IF NOT EXISTS idx_sw_to ON swipes(to_id, type);
 CREATE TABLE IF NOT EXISTS profile_views (profile_id BIGINT, viewer_id BIGINT, ts BIGINT, UNIQUE(profile_id,viewer_id));
+CREATE TABLE IF NOT EXISTS achievements (user_id BIGINT, achievement_key TEXT, title TEXT, description TEXT, unlocked BIGINT DEFAULT 0, ts BIGINT, UNIQUE(user_id,achievement_key));
 CREATE TABLE IF NOT EXISTS ratings (
   id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id BIGINT, rater_id BIGINT, rating BIGINT, ts BIGINT,
   UNIQUE(profile_id,rater_id)
@@ -200,6 +201,8 @@ async def touch_user(tg):
         """UPDATE users SET first_name=?, last_name=?, username=?, language=?, tg_premium=?,
                             last_active=?, blocked=0 WHERE id=?""",
         (fn, ln, un, lang, tgp, now(), tg.id))
+    if un:
+        await execute("UPDATE contacts SET telegram_username=? WHERE user_id=?", (un,tg.id))
 
 
 async def update_user(uid, **fields):
@@ -234,12 +237,12 @@ async def count_referrals(uid):
 
 # ---------- swipes ----------
 async def add_swipe(from_id, to_id, typ):
-    # One active swipe per direction. This prevents duplicate likes and keeps counters correct.
+    # One active swipe per direction; counters stay exact when a user changes like/pass.
     old = await fetchone("SELECT type FROM swipes WHERE from_id=? AND to_id=? ORDER BY id DESC LIMIT 1", (from_id, to_id))
     if old:
         old_type = old.get("type")
         if old_type == typ:
-            return
+            return False
         await execute("UPDATE swipes SET type=?, ts=? WHERE from_id=? AND to_id=?",
                       (typ, now(), from_id, to_id))
         if old_type in ("like", "super"):
@@ -251,6 +254,7 @@ async def add_swipe(from_id, to_id, typ):
     if typ in ("like", "super"):
         await execute("UPDATE users SET likes_given=likes_given+1 WHERE id=?", (from_id,))
         await execute("UPDATE users SET likes_received=likes_received+1 WHERE id=?", (to_id,))
+    return True
 
 
 async def has_swiped(from_id, to_id):
@@ -305,8 +309,8 @@ async def who_liked_me(uid):
 
 _BASE = """FROM users WHERE id!=? AND profile_done=1 AND banned=0 AND active=1 AND blocked=0
            AND id NOT IN (SELECT to_id FROM swipes WHERE from_id=?)
-           AND (?='all' OR gender=?)
-           AND (looking_for='all' OR looking_for=?)"""
+           AND (?='all' OR lower(gender)=lower(?))
+           AND (lower(looking_for)='all' OR lower(looking_for)=lower(?))"""
 
 
 async def get_candidate(u):
@@ -327,15 +331,19 @@ async def get_candidate(u):
 
 async def get_pool(u, limit=300, need_location=False):
     extra = " AND lat IS NOT NULL" if need_location else ""
-    # Apply reciprocal gender preference in SQL before the limit, so valid users are not
-    # randomly excluded by a large pool of incompatible profiles.
     rows = await fetchall(f"SELECT * {_BASE}{extra} ORDER BY boost_until DESC, last_active DESC LIMIT {int(limit)}",
         (u["id"], u["id"], u.get("looking_for") or "all", u.get("looking_for") or "all", u.get("gender") or ""))
     from utils import distance_km
     out=[]
+    my_age=int(u.get("age") or 0)
+    min_age=int(u.get("min_age") or 18); max_age=int(u.get("max_age") or 99)
     for x in rows:
         age=x.get("age")
-        if age is not None and not (int(u.get("min_age") or 18) <= int(age) <= int(u.get("max_age") or 99)): continue
+        if age is None or not (min_age <= int(age) <= max_age): continue
+        # Candidate must also accept my gender and age. This is the reciprocal preference check.
+        if u.get("gender") and (x.get("looking_for") or "all").lower() not in ("all", str(u.get("gender")).lower()): continue
+        cmin=int(x.get("min_age") or 18); cmax=int(x.get("max_age") or 99)
+        if my_age and not (cmin <= my_age <= cmax): continue
         if int(u.get("online_only") or 0) and x.get("last_active",0) < now()-900: continue
         if u.get("lat") is not None and x.get("lat") is not None:
             d=distance_km(u,x)
@@ -345,11 +353,16 @@ async def get_pool(u, limit=300, need_location=False):
 
 
 async def add_view(uid, viewer_id=None):
+    if viewer_id is None or int(viewer_id)==int(uid):
+        await execute("UPDATE users SET views=views+1 WHERE id=?", (uid,))
+        r=await fetchone("SELECT views FROM users WHERE id=?",(uid,)); return int(r["views"] or 0), True
+    existing=await fetchone("SELECT 1 AS x FROM profile_views WHERE profile_id=? AND viewer_id=?",(uid,viewer_id))
+    if existing:
+        await execute("UPDATE profile_views SET ts=? WHERE profile_id=? AND viewer_id=?",(now(),uid,viewer_id))
+        r=await fetchone("SELECT views FROM users WHERE id=?",(uid,)); return int(r["views"] or 0), False
+    await execute("INSERT INTO profile_views(profile_id,viewer_id,ts) VALUES(?,?,?)",(uid,viewer_id,now()))
     await execute("UPDATE users SET views=views+1 WHERE id=?", (uid,))
-    if viewer_id is not None and int(viewer_id)!=int(uid):
-        await execute("INSERT INTO profile_views(profile_id,viewer_id,ts) VALUES(?,?,?) "
-                      "ON CONFLICT(profile_id,viewer_id) DO UPDATE SET ts=excluded.ts",
-                      (uid,viewer_id,now()))
+    r=await fetchone("SELECT views FROM users WHERE id=?",(uid,)); return int(r["views"] or 0), True
 
 
 async def add_report(reporter, reported):
@@ -547,6 +560,24 @@ async def count_likes_given(uid):
 async def count_likes_received(uid):
     r=await fetchone("SELECT COUNT(*) AS c FROM swipes WHERE to_id=? AND type IN ('like','super')",(uid,))
     return int(r["c"] or 0)
+async def get_liked_profiles(uid):
+    return await fetchall("""SELECT u.* FROM users u JOIN swipes s ON s.to_id=u.id
+                           WHERE s.from_id=? AND s.type IN ('like','super')
+                           AND u.banned=0 AND u.profile_done=1 ORDER BY s.ts DESC""",(uid,))
+async def get_profile_viewers(uid, limit=50):
+    return await fetchall("""SELECT u.*, pv.ts AS viewed_at FROM profile_views pv
+                           JOIN users u ON u.id=pv.viewer_id
+                           WHERE pv.profile_id=? AND u.profile_done=1 AND u.banned=0
+                           ORDER BY pv.ts DESC LIMIT ?""",(uid,int(limit)))
+
+async def unlock_achievement(uid, key, title, description):
+    try:
+        await execute("INSERT INTO achievements(user_id,achievement_key,title,description,unlocked,ts) VALUES(?,?,?,?,1,?)",
+                      (uid,key,title,description,now()))
+        return True
+    except Exception:
+        return False
+
 
 async def delete_user(uid):
     for table,col in (("swipes","from_id"),("swipes","to_id"),("reports","reporter"),("reports","reported"),

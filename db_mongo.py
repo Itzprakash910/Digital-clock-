@@ -54,6 +54,7 @@ async def init_db():
     await mongo.chat_sessions.create_index([("chat_key", ASCENDING)], unique=True)
     await mongo.chat_sessions.create_index([("user_a", ASCENDING), ("first_started", DESCENDING)])
     await mongo.chat_sessions.create_index([("user_b", ASCENDING), ("first_started", DESCENDING)])
+    await mongo.achievements.create_index([("user_id", ASCENDING), ("achievement_key", ASCENDING)], unique=True)
 
 
 async def close_db():
@@ -99,6 +100,7 @@ async def touch_user(tg):
     await mongo.users.update_one({"id": int(tg.id)}, {"$set": {
         "first_name": fn, "last_name": ln, "username": un, "language": lang,
         "tg_premium": tgp, "last_active": now(), "blocked": 0,
+        "contacts.telegram_username": un,
     }}, upsert=True)
 
 
@@ -139,11 +141,18 @@ async def count_users(): return await mongo.users.count_documents({})
 
 
 async def add_swipe(from_id, to_id, typ):
+    old = await mongo.swipes.find_one({"from_id": int(from_id), "to_id": int(to_id)})
+    if old and old.get("type") == typ:
+        return False
+    if old and old.get("type") in ("like", "super"):
+        await mongo.users.update_one({"id": int(from_id)}, {"$inc": {"likes_given": -1}})
+        await mongo.users.update_one({"id": int(to_id)}, {"$inc": {"likes_received": -1}})
     await mongo.swipes.update_one({"from_id": int(from_id), "to_id": int(to_id)},
         {"$set": {"type": typ, "ts": now()}}, upsert=True)
     if typ in ("like", "super"):
         await mongo.users.update_one({"id": int(from_id)}, {"$inc": {"likes_given": 1}})
         await mongo.users.update_one({"id": int(to_id)}, {"$inc": {"likes_received": 1}})
+    return True
 
 
 async def has_swiped(from_id, to_id):
@@ -210,15 +219,18 @@ async def get_pool(u, limit=300, need_location=False):
     q = _eligible_filter(u)
     q["id"] = {"$ne": int(u["id"]), "$nin": await _seen_ids(u["id"])}
     if need_location: q["lat"] = {"$ne": None}
-    rows = [_doc(x) async for x in mongo.users.find(q).limit(int(limit))]
+    rows = [_doc(x) async for x in mongo.users.find(q).sort([("boost_until", DESCENDING),("last_active", DESCENDING)]).limit(int(limit))]
     min_age=int(u.get("min_age") or 18); max_age=int(u.get("max_age") or 99)
-    max_dist=float(u.get("max_distance") or 100)
+    max_dist=float(u.get("max_distance") or 100); my_age=int(u.get("age") or 0)
     online=bool(u.get("online_only"))
     from utils import distance_km
     out=[]
     for x in rows:
         age=x.get("age")
-        if age is not None and not (min_age <= int(age) <= max_age): continue
+        if age is None or not (min_age <= int(age) <= max_age): continue
+        if u.get("gender") and (x.get("looking_for") or "all").lower() not in ("all", str(u.get("gender")).lower()): continue
+        cmin=int(x.get("min_age") or 18); cmax=int(x.get("max_age") or 99)
+        if my_age and not (cmin <= my_age <= cmax): continue
         if online and (x.get("last_active",0) < now()-900): continue
         if u.get("lat") is not None and x.get("lat") is not None and max_dist < 99999:
             d=distance_km(u,x)
@@ -244,10 +256,16 @@ async def get_candidate(u):
 
 
 async def add_view(uid, viewer_id=None):
+    if viewer_id is None or int(viewer_id)==int(uid):
+        await mongo.users.update_one({"id": int(uid)}, {"$inc": {"views": 1}})
+        u=await get_user(uid); return int(u.get("views") or 0), True
+    existing=await mongo.profile_views.find_one({"profile_id": int(uid), "viewer_id": int(viewer_id)})
+    await mongo.profile_views.update_one({"profile_id": int(uid), "viewer_id": int(viewer_id)},
+        {"$set": {"ts": now()}}, upsert=True)
+    if existing:
+        u=await get_user(uid); return int(u.get("views") or 0), False
     await mongo.users.update_one({"id": int(uid)}, {"$inc": {"views": 1}})
-    if viewer_id is not None and int(viewer_id) != int(uid):
-        await mongo.profile_views.update_one({"profile_id": int(uid), "viewer_id": int(viewer_id)},
-            {"$set": {"ts": now()}}, upsert=True)
+    u=await get_user(uid); return int(u.get("views") or 0), True
 
 
 async def add_report(reporter, reported):
@@ -308,6 +326,26 @@ async def add_payment(user_id, plan, amount, currency, charge_id):
 
 async def count_likes_given(uid): return await mongo.swipes.count_documents({"from_id": int(uid), "type": {"$ne": "pass"}})
 async def count_likes_received(uid): return await mongo.swipes.count_documents({"to_id": int(uid), "type": {"$ne": "pass"}})
+async def get_liked_profiles(uid):
+    ids=[x["to_id"] async for x in mongo.swipes.find({"from_id":int(uid),"type":{"$in":["like","super"]}}, {"to_id":1}).sort("ts",DESCENDING)]
+    if not ids: return []
+    return [_doc(x) async for x in mongo.users.find({"id":{"$in":ids},"banned":0,"profile_done":1})]
+async def get_profile_viewers(uid, limit=50):
+    rows=[_doc(x) async for x in mongo.profile_views.find({"profile_id":int(uid)}).sort("ts",DESCENDING).limit(int(limit))]
+    ids=[x.get("viewer_id") for x in rows]
+    if not ids: return []
+    users={int(x["id"]):_doc(x) async for x in mongo.users.find({"id":{"$in":ids},"profile_done":1,"banned":0})}
+    out=[]
+    for r in rows:
+        u=users.get(int(r["viewer_id"]))
+        if u: u["viewed_at"]=r.get("ts"); out.append(u)
+    return out
+
+async def unlock_achievement(uid, key, title, description):
+    r=await mongo.achievements.update_one({"user_id":int(uid),"achievement_key":key},
+        {"$setOnInsert":{"user_id":int(uid),"achievement_key":key,"title":title,"description":description,"unlocked":1,"ts":now()}},upsert=True)
+    return bool(r.upserted_id)
+
 
 
 async def stats_global():
